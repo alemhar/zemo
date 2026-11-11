@@ -43,26 +43,63 @@
 <body>
   <h1>Phase 0 — Share Visibility Spike</h1>
   <p class="lede">
-    Answering one question: does a transparent, always-on-top, layered overlay show up
-    in a <strong>monitor share</strong> on Teams and Zoom? Everything in Zemo depends on yes.
-    <br>This window is capture-excluded, so a viewer should never see it.
+    Draw on the screen, drop back to pass-through to click your apps, then come back and draw
+    again — the marks you already made stay put.
   </p>
 
+  <div class="card" style="border-color:#3a4150">
+    <h2>The loop</h2>
+    <div class="row" style="gap:14px">
+      <span id="modePill" class="pill ok">pass-through</span>
+      <span class="hint" style="margin:0">press <code>Ctrl+Alt+Z</code> anywhere to toggle</span>
+    </div>
+    <dl style="margin-top:12px">
+      <dt><code>Ctrl+Alt+Z</code></dt><dd>draw &#8644; pass-through</dd>
+      <dt><code>Esc</code></dt><dd>back to pass-through (keeps marks)</dd>
+      <dt><code>Ctrl+Alt+A</code></dt><dd>clear all marks</dd>
+      <dt><code>Ctrl+Alt+&#9003;</code></dt><dd>remove <strong>newest</strong> mark</dd>
+      <dt><code>Ctrl+Alt+Home</code></dt><dd>remove <strong>oldest</strong> mark</dd>
+      <dt><code>Ctrl+Alt+R</code></dt><dd>reset — clear + pass-through</dd>
+      <dt><code>Ctrl+Alt+Shift+Q</code></dt><dd>quit the spike</dd>
+    </dl>
+    <p class="hint">
+      These are global — they work while any other app is focused, which is the point:
+      once you're clicking the app you're demoing, you shouldn't have to find this window.
+    </p>
+  </div>
+
   <div class="card">
-    <h2>Test protocol</h2>
-    <ol>
-      <li>Start a call with a second participant (a phone or second machine works).</li>
-      <li>Share <strong>Screen / Entire Screen</strong> — <em>not</em> a window.</li>
-      <li>Ask: <em>"can you see a red frame and a counting clock?"</em> → that's <strong>Test A</strong>.</li>
-      <li>Hit <strong>Exclude overlay</strong> below. They should see it vanish, then return when you
-          turn it off. This is the positive control — it proves the share is really capturing our
-          window, so a "no" in Test A is a genuine negative.</li>
-      <li>Change the accent colour and have them confirm it live. Rules out a stale frame.</li>
-      <li>Ask whether they can see <em>this</em> control panel → that's <strong>Test B</strong>.
-          They should <strong>not</strong>.</li>
-      <li>Repeat all of it on the other platform (Teams, then Zoom).</li>
-      <li>Record results in <code>docs/plans/01-share-visibility-spike.md</code>.</li>
-    </ol>
+    <h2>Tool</h2>
+    <div class="row">
+      <button class="tool on" data-t="arrow">Arrow</button>
+      <button class="tool" data-t="rect">Rectangle</button>
+      <button class="tool" data-t="ellipse">Ellipse</button>
+      <button class="tool" data-t="pen">Pen</button>
+    </div>
+    <div class="row" style="margin-top:9px">
+      <button id="pass">Pass through now</button>
+      <button id="gfx" class="on">Test graphics on</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Marks <span id="count" class="pill ok">0</span></h2>
+    <div class="row">
+      <button id="rmNewest">&#8592; Remove newest</button>
+      <button id="rmOldest">Remove oldest &#8594;</button>
+      <button id="clear" class="danger">Clear all</button>
+    </div>
+    <p class="hint">
+      <strong>Newest</strong> is undo — it walks back the way you drew.
+      <strong>Oldest</strong> drains from the front, so a sequence of marks retires in the
+      order you made it. Both work while you're in pass-through, so you can retire marks
+      without re-arming.
+    </p>
+    <p class="hint">
+      Picking a tool arms draw mode. <strong>Arrow is head-first</strong> — press where you want
+      the point, drag out to where the tail should go. Right-click cancels mid-draw.
+      Turn test graphics off for a clean surface.
+    </p>
   </div>
 
   <div class="card">
@@ -81,7 +118,7 @@
   </div>
 
   <div class="card">
-    <h2>Accent colour — liveness check</h2>
+    <h2>Colour</h2>
     <div class="row">
       <button class="swatch" style="background:#FF2D2D" data-c="#FF2D2D"></button>
       <button class="swatch" style="background:#FFB020" data-c="#FFB020"></button>
@@ -194,6 +231,54 @@
     "Excluded from capture", "VISIBLE to capture",
     (on) => invoke("set_exclusion", { target: "control", excluded: on })
   );
+
+  // ── Mode + tools ────────────────────────────────────────────────────────────
+  const modePill = document.getElementById("modePill");
+
+  function renderMode(armed, tool) {
+    modePill.className = "pill " + (armed ? "bad" : "ok");
+    modePill.textContent = armed ? `drawing: ${tool}` : "pass-through";
+  }
+
+  document.querySelectorAll(".tool").forEach((b) => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll(".tool").forEach((o) => o.classList.remove("on"));
+      b.classList.add("on");
+      call("set_tool", { tool: b.dataset.t }).catch((e) => say(String(e), true));
+    });
+  });
+
+  document.getElementById("pass").addEventListener("click", () =>
+    call("set_tool", { tool: "none" }).catch((e) => say(String(e), true)));
+
+  document.getElementById("clear").addEventListener("click", () =>
+    call("clear_shapes").catch((e) => say(String(e), true)));
+
+  document.getElementById("rmNewest").addEventListener("click", () =>
+    call("remove_shape", { which: "newest" }).catch((e) => say(String(e), true)));
+
+  document.getElementById("rmOldest").addEventListener("click", () =>
+    call("remove_shape", { which: "oldest" }).catch((e) => say(String(e), true)));
+
+  // Count is owned by the overlay (it holds the shape list) and pushed here.
+  const countEl = document.getElementById("count");
+  window.__TAURI__.event.listen("shape-count", (e) => {
+    countEl.textContent = e.payload;
+    countEl.className = "pill " + (e.payload > 0 ? "bad" : "ok");
+  });
+
+  toggle(
+    document.getElementById("gfx"),
+    "Test graphics on", "Test graphics off",
+    (on) => invoke("set_test_graphics", { visible: on })
+  );
+
+  // The hotkey can change mode without this panel being involved, so the pill is
+  // driven by an event from the backend rather than by the click handlers.
+  window.__TAURI__.event.listen("mode-changed", (e) => {
+    const [armed, tool] = e.payload;
+    renderMode(armed, tool);
+  });
 
   document.querySelectorAll(".swatch").forEach((b) => {
     b.addEventListener("click", () =>

@@ -14,14 +14,16 @@
     overflow: hidden;
     background: transparent;
     user-select: none;
-    cursor: default;
     font-family: "Segoe UI", system-ui, sans-serif;
   }
 
   :root { --accent: #FF2D2D; }
 
-  /* A 6px frame proves the overlay really covers the whole monitor —
-     if a side is missing, the chrome compensation in main.rs is off. */
+  /* Crosshair only while a tool is armed, so the cursor itself signals state. */
+  body.armed { cursor: crosshair; }
+
+  /* ── Test graphics (the share-visibility markers) ────────────────────────── */
+
   .frame {
     position: fixed; inset: 0;
     border: 6px solid var(--accent);
@@ -30,10 +32,7 @@
   }
   @keyframes breathe { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
 
-  .corner {
-    position: fixed; width: 90px; height: 90px;
-    border: 6px solid var(--accent);
-  }
+  .corner { position: fixed; width: 90px; height: 90px; border: 6px solid var(--accent); }
   .tl { top: 24px; left: 24px; border-right: 0; border-bottom: 0; }
   .tr { top: 24px; right: 24px; border-left: 0; border-bottom: 0; }
   .bl { bottom: 24px; left: 24px; border-right: 0; border-top: 0; }
@@ -43,18 +42,10 @@
     position: fixed; top: 50%; left: 50%;
     transform: translate(-50%, -50%);
     text-align: center;
-    /* Dark halo so the text survives on top of light desktops too */
     text-shadow: 0 2px 14px rgba(0,0,0,.85), 0 0 3px rgba(0,0,0,.9);
   }
-
-  .headline {
-    font-size: 54px; font-weight: 800; letter-spacing: -1px;
-    color: var(--accent);
-    margin: 0 0 6px;
-  }
-  .sub {
-    font-size: 22px; font-weight: 600; color: #fff; margin: 0 0 22px;
-  }
+  .headline { font-size: 54px; font-weight: 800; letter-spacing: -1px; color: var(--accent); margin: 0 0 6px; }
+  .sub { font-size: 22px; font-weight: 600; color: #fff; margin: 0 0 22px; }
 
   /* Live clock with milliseconds: a frozen or cached frame is immediately
      obvious to the person watching the share. */
@@ -63,79 +54,290 @@
     font-size: 40px; font-weight: 700; color: #fff;
     background: rgba(0,0,0,.55);
     padding: 10px 22px; border-radius: 10px;
-    display: inline-block;
-    border: 2px solid var(--accent);
+    display: inline-block; border: 2px solid var(--accent);
   }
 
-  /* A sweeping dot proves motion survives the capture + encode pipeline. */
-  .track {
-    position: fixed; left: 0; right: 0; top: 140px; height: 34px;
-  }
+  .track { position: fixed; left: 0; right: 0; top: 140px; height: 34px; }
   .dot {
-    position: absolute; top: 0;
-    width: 34px; height: 34px; border-radius: 50%;
-    background: var(--accent);
-    box-shadow: 0 0 22px var(--accent);
+    position: absolute; top: 0; width: 34px; height: 34px; border-radius: 50%;
+    background: var(--accent); box-shadow: 0 0 22px var(--accent);
     animation: sweep 3.2s linear infinite;
   }
-  @keyframes sweep {
-    0%   { left: 0 }
-    50%  { left: calc(100% - 34px) }
-    100% { left: 0 }
-  }
+  @keyframes sweep { 0% { left: 0 } 50% { left: calc(100% - 34px) } 100% { left: 0 } }
 
-  .arrow { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); }
+  .sample { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); }
 
+  /* ── Drawing surface ─────────────────────────────────────────────────────── */
+
+  #draw { position: fixed; inset: 0; width: 100%; height: 100%; }
+
+  /* Status chip. Sits bottom-centre so it reads as a caption rather than
+     competing with whatever is being annotated. */
   .legend {
     position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%);
     font-size: 16px; color: #fff; background: rgba(0,0,0,.6);
     padding: 8px 18px; border-radius: 8px; letter-spacing: .3px;
+    white-space: nowrap;
   }
+  .legend b { color: var(--accent); }
 </style>
 </head>
 <body>
-  <div class="frame"></div>
-  <div class="corner tl"></div>
-  <div class="corner tr"></div>
-  <div class="corner bl"></div>
-  <div class="corner br"></div>
+  <div id="testgfx">
+    <div class="frame"></div>
+    <div class="corner tl"></div>
+    <div class="corner tr"></div>
+    <div class="corner bl"></div>
+    <div class="corner br"></div>
 
-  <div class="track"><div class="dot"></div></div>
+    <div class="track"><div class="dot"></div></div>
 
-  <div class="center">
-    <p class="headline">ZEMO OVERLAY</p>
-    <p class="sub">If you can read this on the shared screen, Phase&nbsp;0 PASSES</p>
-    <div class="clock" id="clock">--:--:--.---</div>
+    <div class="center">
+      <p class="headline">ZEMO OVERLAY</p>
+      <p class="sub">If you can read this on the shared screen, Phase&nbsp;0 PASSES</p>
+      <div class="clock" id="clock">--:--:--.---</div>
+    </div>
+
+    <svg class="sample" width="300" height="90" viewBox="0 0 300 90" fill="none">
+      <!-- Head-first arrow (PRD R6.0): the point is what matters, so it leads. -->
+      <path d="M14 45 L120 45" stroke="var(--accent)" stroke-width="10" stroke-linecap="round"/>
+      <path d="M8 45 L48 24 L40 45 L48 66 Z" fill="var(--accent)"/>
+      <text x="140" y="54" fill="#fff" font-size="26" font-weight="700"
+            style="text-shadow:0 2px 10px rgba(0,0,0,.9)">head-first</text>
+    </svg>
   </div>
 
-  <svg class="arrow" width="300" height="90" viewBox="0 0 300 90" fill="none">
-    <!-- Head-first arrow (PRD R6.0): the point is what matters, so it leads. -->
-    <path d="M14 45 L120 45" stroke="var(--accent)" stroke-width="10" stroke-linecap="round"/>
-    <path d="M8 45 L48 24 L40 45 L48 66 Z" fill="var(--accent)"/>
-    <text x="140" y="54" fill="#fff" font-size="26" font-weight="700"
-          style="text-shadow:0 2px 10px rgba(0,0,0,.9)">head-first</text>
-  </svg>
+  <!-- Drawn shapes live here. Above the test graphics so annotations always win. -->
+  <svg id="draw"></svg>
 
   <div class="legend" id="legend">overlay • click-through • NOT capture-excluded</div>
 
 <script>
+  const { event, core } = window.__TAURI__ ?? {};
+  const invoke = core?.invoke;
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  const draw = document.getElementById("draw");
+  const legend = document.getElementById("legend");
+  const testgfx = document.getElementById("testgfx");
+
+  let tool = "none";
+  let stroke = 6;
+  let accent = () =>
+    getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#FF2D2D";
+
+  // ── Clock ──────────────────────────────────────────────────────────────────
   const clock = document.getElementById("clock");
-  function tick() {
+  (function tick() {
     const d = new Date();
     const p = (n, w = 2) => String(n).padStart(w, "0");
     clock.textContent =
       `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${p(d.getMilliseconds(), 3)}`;
     requestAnimationFrame(tick);
-  }
-  tick();
+  })();
 
-  // The control panel can change the accent colour mid-call. Say the colour out
-  // loud, have the viewer confirm it changed — that rules out them looking at a
-  // stale thumbnail or a cached frame.
-  const { event } = window.__TAURI__ ?? {};
+  // ── Shape builders ─────────────────────────────────────────────────────────
+  // Each returns an SVG element and exposes update(a, b) so the same code path
+  // drives the live preview and the committed shape.
+
+  function el(name, attrs) {
+    const n = document.createElementNS(SVG_NS, name);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    return n;
+  }
+
+  // A dark halo under every mark so red-on-red stays legible over arbitrary UI
+  // (PRD R6.3). Drawn as a wider shape of the same geometry, underneath.
+  function haloed(make) {
+    const g = el("g", {});
+    const halo = make("rgba(0,0,0,.35)", stroke + 3);
+    const main = make(accent(), stroke);
+    g.append(halo, main);
+    return { node: g, parts: [halo, main] };
+  }
+
+  function makeRect() {
+    const s = haloed((color, w) =>
+      el("rect", { fill: "none", stroke: color, "stroke-width": w, rx: 3 }));
+    s.update = (a, b) => {
+      const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y);
+      const w = Math.abs(b.x - a.x), h = Math.abs(b.y - a.y);
+      s.parts.forEach((p) => {
+        p.setAttribute("x", x); p.setAttribute("y", y);
+        p.setAttribute("width", w); p.setAttribute("height", h);
+      });
+    };
+    return s;
+  }
+
+  function makeEllipse() {
+    const s = haloed((color, w) =>
+      el("ellipse", { fill: "none", stroke: color, "stroke-width": w }));
+    s.update = (a, b) => {
+      s.parts.forEach((p) => {
+        p.setAttribute("cx", (a.x + b.x) / 2); p.setAttribute("cy", (a.y + b.y) / 2);
+        p.setAttribute("rx", Math.abs(b.x - a.x) / 2); p.setAttribute("ry", Math.abs(b.y - a.y) / 2);
+      });
+    };
+    return s;
+  }
+
+  function makePen() {
+    const pts = [];
+    const s = haloed((color, w) =>
+      el("polyline", { fill: "none", stroke: color, "stroke-width": w,
+                       "stroke-linecap": "round", "stroke-linejoin": "round" }));
+    s.update = (a, b) => {
+      pts.push(`${b.x},${b.y}`);
+      s.parts.forEach((p) => p.setAttribute("points", pts.join(" ")));
+    };
+    return s;
+  }
+
+  /**
+   * Head-first arrow (PRD R6.0): `a` is where the user pressed — the POINT —
+   * and `b` is the tail they drag out. Inverted from every other drawing app on
+   * purpose: the cursor is already on the thing being talked about, so aiming
+   * twice and thinking backwards mid-sentence is the thing being designed out.
+   */
+  function makeArrow() {
+    const s = haloed((color, w) => {
+      const g = el("g", {});
+      g.append(
+        el("line", { stroke: color, "stroke-width": w, "stroke-linecap": "round" }),
+        el("polygon", { fill: color })
+      );
+      return g;
+    });
+    s.update = (head, tail) => {
+      const dx = head.x - tail.x, dy = head.y - tail.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const ux = dx / len, uy = dy / len;
+
+      s.parts.forEach((g, i) => {
+        const w = i === 0 ? stroke + 3 : stroke;
+        const headLen = w * 3.2, headHalf = w * 1.9;
+        // Stop the shaft at the base of the head so it doesn't poke through.
+        const bx = head.x - ux * headLen, by = head.y - uy * headLen;
+        const [line, poly] = g.children;
+        line.setAttribute("x1", tail.x); line.setAttribute("y1", tail.y);
+        line.setAttribute("x2", bx);     line.setAttribute("y2", by);
+        // Perpendicular, for the two back corners of the head.
+        const px = -uy, py = ux;
+        poly.setAttribute("points", [
+          `${head.x},${head.y}`,
+          `${bx + px * headHalf},${by + py * headHalf}`,
+          `${bx - px * headHalf},${by - py * headHalf}`,
+        ].join(" "));
+      });
+    };
+    return s;
+  }
+
+  const BUILDERS = { rect: makeRect, ellipse: makeEllipse, arrow: makeArrow, pen: makePen };
+
+  // ── Shape list ─────────────────────────────────────────────────────────────
+  // Kept in draw order so marks can be retired from either end: newest-first
+  // (undo) or oldest-first (drain the sequence in the order you drew it).
+  const shapes = [];
+
+  function syncCount() {
+    invoke?.("report_count", { count: shapes.length }).catch(() => {});
+  }
+
+  function removeNewest() {
+    shapes.pop()?.node.remove();
+    syncCount();
+  }
+
+  function removeOldest() {
+    shapes.shift()?.node.remove();
+    syncCount();
+  }
+
+  function clearAll() {
+    shapes.length = 0;
+    draw.replaceChildren();
+    syncCount();
+  }
+
+  // ── Drawing interaction ────────────────────────────────────────────────────
+  let active = null;
+  let start = null;
+
+  const pos = (e) => ({ x: e.clientX, y: e.clientY });
+
+  window.addEventListener("pointerdown", (e) => {
+    if (tool === "none" || !BUILDERS[tool]) return;
+    if (e.button !== 0) return;
+    start = pos(e);
+    active = BUILDERS[tool]();
+    active.update(start, start);
+    draw.appendChild(active.node);
+    window.setPointerCapture?.call(e.target, e.pointerId);
+  });
+
+  window.addEventListener("pointermove", (e) => {
+    if (!active) return;
+    active.update(start, pos(e));
+  });
+
+  window.addEventListener("pointerup", () => {
+    if (!active) return;
+    // A click with no drag leaves a degenerate shape; drop it.
+    const b = active.node.getBBox();
+    if (b.width < 3 && b.height < 3) {
+      active.node.remove();
+    } else {
+      shapes.push(active);
+      syncCount();
+    }
+    active = null;
+    start = null;
+  });
+
+  // Right-click cancels whatever is mid-draw without committing (R6.0.3).
+  window.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (active) { active.node.remove(); active = null; start = null; }
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if (active) { active.node.remove(); active = null; start = null; return; }
+      invoke?.("set_tool", { tool: "none" });   // hand control back to the desktop
+      return;
+    }
+    // Unmodified shortcuts work here because the overlay only has focus while
+    // armed — they can't leak into the app underneath.
+    if (e.ctrlKey && e.key.toLowerCase() === "z") { removeNewest(); return; }
+    if (e.key === "Backspace") { removeNewest(); return; }
+    if (e.key === "Home") { removeOldest(); }
+  });
+
+  // ── State from the control panel ───────────────────────────────────────────
+  function setTool(next) {
+    tool = next;
+    document.body.classList.toggle("armed", tool !== "none");
+    legend.innerHTML = tool === "none"
+      ? "overlay • click-through • NOT capture-excluded"
+      : `drawing: <b>${tool}</b> • drag to draw • right-click cancels • Esc exits`;
+  }
+  setTool("none");
+
   if (event) {
     event.listen("set-color", (e) => {
       document.documentElement.style.setProperty("--accent", e.payload);
+    });
+    event.listen("set-tool", (e) => setTool(e.payload));
+    event.listen("set-stroke", (e) => { stroke = e.payload; });
+    event.listen("clear-shapes", () => clearAll());
+    event.listen("remove-shape", (e) => {
+      if (e.payload === "oldest") removeOldest();
+      else removeNewest();
+    });
+    event.listen("test-graphics", (e) => {
+      testgfx.style.display = e.payload ? "" : "none";
     });
   }
 </script>

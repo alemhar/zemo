@@ -15,7 +15,11 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 #[cfg(windows)]
 use windows::Win32::Foundation::HWND;
@@ -235,6 +239,106 @@ fn refit_overlay(app: tauri::AppHandle) -> Result<(i32, i32), String> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Pass-through <-> draw mode
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The core loop: draw something, drop back to pass-through to actually click
+// the app you're demoing, then come back and draw again — without the marks you
+// already made disappearing (PRD R5.4). Arming is a global hotkey because once
+// you're clicking other apps, hunting for a control panel defeats the point.
+
+static ARMED: AtomicBool = AtomicBool::new(false);
+/// Tool to restore when re-arming, so the loop doesn't force a re-pick each time.
+static TOOL: Mutex<String> = Mutex::new(String::new());
+
+fn current_tool() -> String {
+    let t = TOOL.lock().map(|g| g.clone()).unwrap_or_default();
+    if t.is_empty() { "arrow".to_string() } else { t }
+}
+
+/// Single place that flips the mode, so the Win32 state, the overlay and the
+/// control panel can never disagree about which mode we're in.
+fn apply_mode(app: &tauri::AppHandle, armed: bool) -> Result<(), String> {
+    let overlay = window_or_err(app, "overlay")?;
+
+    set_click_through_preserving_layered(&overlay, !armed)?;
+    #[cfg(windows)]
+    apply_webview_transparency(&overlay).map_err(|e| e.to_string())?;
+
+    if armed {
+        // Needed for the overlay to receive Esc and pointer events.
+        let _ = overlay.set_focus();
+    }
+    ARMED.store(armed, Ordering::Relaxed);
+
+    let tool = if armed { current_tool() } else { "none".to_string() };
+    app.emit_to("overlay", "set-tool", tool.clone())
+        .map_err(|e| e.to_string())?;
+    app.emit_to("control", "mode-changed", (armed, tool))
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Pick a tool. Selecting one arms draw mode; "none" returns to pass-through.
+#[tauri::command]
+fn set_tool(app: tauri::AppHandle, tool: String) -> Result<(), String> {
+    if tool != "none" {
+        *TOOL.lock().map_err(|e| e.to_string())? = tool;
+        apply_mode(&app, true)
+    } else {
+        apply_mode(&app, false)
+    }
+}
+
+#[tauri::command]
+fn toggle_mode(app: tauri::AppHandle) -> Result<(), String> {
+    let armed = ARMED.load(Ordering::Relaxed);
+    apply_mode(&app, !armed)
+}
+
+#[tauri::command]
+fn clear_shapes(app: tauri::AppHandle) -> Result<(), String> {
+    app.emit_to("overlay", "clear-shapes", ())
+        .map_err(|e| e.to_string())
+}
+
+/// Remove a single mark. `which` is "newest" (undo-style) or "oldest" (drain
+/// the queue from the front) — useful when you've built up a sequence of marks
+/// and want to retire them in the order you drew them.
+#[tauri::command]
+fn remove_shape(app: tauri::AppHandle, which: String) -> Result<(), String> {
+    app.emit_to("overlay", "remove-shape", which)
+        .map_err(|e| e.to_string())
+}
+
+/// The overlay owns the shape list, so it reports the count back for the panel
+/// to display. Routed through Rust so the panel doesn't need event-emit perms.
+#[tauri::command]
+fn report_count(app: tauri::AppHandle, count: usize) -> Result<(), String> {
+    app.emit_to("control", "shape-count", count)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_stroke(app: tauri::AppHandle, width: u32) -> Result<(), String> {
+    app.emit_to("overlay", "set-stroke", width)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_test_graphics(app: tauri::AppHandle, visible: bool) -> Result<(), String> {
+    app.emit_to("overlay", "test-graphics", visible)
+        .map_err(|e| e.to_string())
+}
+
+/// Panic reset (PRD R5.7): back to pass-through, marks gone, clean desktop.
+#[tauri::command]
+fn panic_reset(app: tauri::AppHandle) -> Result<(), String> {
+    clear_shapes(app.clone())?;
+    apply_mode(&app, false)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Commands driven by the control panel
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -340,12 +444,54 @@ fn quit(app: tauri::AppHandle) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn main() {
+    // Ctrl+Alt+* avoids the usual conferencing-app bindings (Teams Ctrl+Shift+M/O/E,
+    // Zoom Alt+A/V/S). Caveat for later: Windows synthesizes Ctrl+Alt from AltGr
+    // on non-US layouts, which is why the real app makes these remappable.
     tauri::Builder::default()
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(move |app, shortcut, ev| {
+                    // Fire on press only; the release event would toggle straight back.
+                    if ev.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    // Every binding is Ctrl+Alt+<key>, so matching the key code is
+                    // enough — and it avoids the handler owning Shortcut values that
+                    // setup() would also need to borrow.
+                    let result = match shortcut.key {
+                        Code::KeyZ => toggle_mode(app.clone()),
+                        Code::KeyR => panic_reset(app.clone()),
+                        Code::KeyA => clear_shapes(app.clone()),
+                        Code::Backspace => remove_shape(app.clone(), "newest".into()),
+                        Code::Home => remove_shape(app.clone(), "oldest".into()),
+                        // Shift is required so a stray Ctrl+Alt+Q can't kill the
+                        // app mid-presentation. AltGr on non-US layouts synthesizes
+                        // Ctrl+Alt, which makes a two-modifier quit genuinely risky.
+                        Code::KeyQ if shortcut.mods.contains(Modifiers::SHIFT) => {
+                            app.exit(0);
+                            Ok(())
+                        }
+                        _ => Ok(()),
+                    };
+                    if let Err(e) = result {
+                        eprintln!("[spike] shortcut handler failed: {e}");
+                    }
+                })
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
             set_exclusion,
             set_overlay_interactive,
             set_overlay_visible,
             set_overlay_color,
+            set_tool,
+            toggle_mode,
+            clear_shapes,
+            remove_shape,
+            report_count,
+            set_stroke,
+            set_test_graphics,
+            panic_reset,
             geometry_check,
             refit_overlay,
             diagnostics,
@@ -381,6 +527,31 @@ fn main() {
             let _ = set_capture_excluded(&overlay, false);
 
             overlay.show()?;
+
+            // Rebuilt rather than captured: the handler closure above already owns
+            // the originals, and Shortcut is cheap to construct.
+            let ctrl_alt = Some(Modifiers::CONTROL | Modifiers::ALT);
+            for (sc, name) in [
+                (Shortcut::new(ctrl_alt, Code::KeyZ), "Ctrl+Alt+Z      toggle draw"),
+                (Shortcut::new(ctrl_alt, Code::KeyA), "Ctrl+Alt+A      clear all"),
+                (Shortcut::new(ctrl_alt, Code::Backspace), "Ctrl+Alt+Bksp   remove newest"),
+                (Shortcut::new(ctrl_alt, Code::Home), "Ctrl+Alt+Home   remove oldest"),
+                (Shortcut::new(ctrl_alt, Code::KeyR), "Ctrl+Alt+R      reset"),
+                (
+                    Shortcut::new(
+                        Some(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT),
+                        Code::KeyQ,
+                    ),
+                    "Ctrl+Alt+Shift+Q  quit",
+                ),
+            ] {
+                // A failure here means another app owns the combo — surfaced rather
+                // than swallowed, since the loop is unusable without the hotkey.
+                match app.global_shortcut().register(sc) {
+                    Ok(()) => eprintln!("[spike] registered  {name}"),
+                    Err(e) => eprintln!("[spike] UNAVAILABLE  {name}  ({e})"),
+                }
+            }
 
             // The control panel IS capture-excluded (PRD R4.2) — viewers should
             // never see the presenter's controls.
