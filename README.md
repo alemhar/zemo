@@ -60,7 +60,7 @@ this limitation is on the v2 list.
 
 | Phase | Scope | Status |
 |---|---|---|
-| **0** | Spike: confirm the overlay actually appears in a real Teams/Zoom monitor share | ⬜ Not started |
+| **0** | Spike: confirm the overlay actually appears in a real Teams/Zoom monitor share | 🟡 [Built](spikes/00-share-visibility/) — local capture passes, live-call tests pending |
 | **1** | Transparent full-monitor overlay, pass-through ⇄ draw state machine, tray | ⬜ |
 | **2** | Annotation tools, colours, undo, toolbar pill | ⬜ |
 | **3** | Cursor highlight, click ripples, spotlight | ⬜ |

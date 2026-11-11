@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Zemo — Phase 0 Spike</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f26; --line: #2c313b;
+    --text: #e8eaed; --muted: #959cab; --accent: #FF2D2D; --ok: #37d67a; --warn: #ffb020;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 18px; background: var(--bg); color: var(--text);
+    font-family: "Segoe UI", system-ui, sans-serif; font-size: 14px;
+  }
+  h1 { font-size: 17px; margin: 0 0 2px; }
+  .lede { color: var(--muted); font-size: 12.5px; margin: 0 0 16px; line-height: 1.5; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); margin: 0 0 10px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button {
+    background: #262b34; color: var(--text); border: 1px solid var(--line);
+    padding: 8px 13px; border-radius: 7px; cursor: pointer; font-size: 13px; font-family: inherit;
+  }
+  button:hover { background: #30363f; }
+  button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.danger { border-color: #5a2b2b; }
+  .swatch { width: 30px; height: 30px; border-radius: 6px; border: 2px solid var(--line); padding: 0; }
+  .hint { color: var(--muted); font-size: 12px; margin-top: 9px; line-height: 1.5; }
+  code { background: #111316; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; margin: 0; font-size: 12.5px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; font-family: Consolas, monospace; }
+  ol { margin: 0; padding-left: 19px; line-height: 1.65; }
+  ol li { margin-bottom: 7px; }
+  .pill { font-size: 11px; padding: 2px 7px; border-radius: 20px; font-weight: 600; }
+  .pill.ok { background: rgba(55,214,122,.15); color: var(--ok); }
+  .pill.bad { background: rgba(255,45,45,.15); color: var(--accent); }
+  #status { font-size: 12px; color: var(--muted); min-height: 16px; margin-top: 9px; }
+  .warn { color: var(--warn); }
+</style>
+</head>
+<body>
+  <h1>Phase 0 — Share Visibility Spike</h1>
+  <p class="lede">
+    Answering one question: does a transparent, always-on-top, layered overlay show up
+    in a <strong>monitor share</strong> on Teams and Zoom? Everything in Zemo depends on yes.
+    <br>This window is capture-excluded, so a viewer should never see it.
+  </p>
+
+  <div class="card">
+    <h2>Test protocol</h2>
+    <ol>
+      <li>Start a call with a second participant (a phone or second machine works).</li>
+      <li>Share <strong>Screen / Entire Screen</strong> — <em>not</em> a window.</li>
+      <li>Ask: <em>"can you see a red frame and a counting clock?"</em> → that's <strong>Test A</strong>.</li>
+      <li>Hit <strong>Exclude overlay</strong> below. They should see it vanish, then return when you
+          turn it off. This is the positive control — it proves the share is really capturing our
+          window, so a "no" in Test A is a genuine negative.</li>
+      <li>Change the accent colour and have them confirm it live. Rules out a stale frame.</li>
+      <li>Ask whether they can see <em>this</em> control panel → that's <strong>Test B</strong>.
+          They should <strong>not</strong>.</li>
+      <li>Repeat all of it on the other platform (Teams, then Zoom).</li>
+      <li>Record results in <code>docs/plans/01-share-visibility-spike.md</code>.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h2>Overlay</h2>
+    <div class="row">
+      <button id="vis" class="on">Overlay visible</button>
+      <button id="excl">Exclude overlay from capture</button>
+      <button id="inter">Make interactive</button>
+    </div>
+    <p class="hint">
+      <strong>Exclude overlay</strong> is the positive control for Test A.
+      <strong>Make interactive</strong> drops click-through — the overlay will swallow your
+      clicks, and it also checks that transparency survives the toggle (the bug that
+      <code>set_click_through_preserving_layered</code> exists to prevent).
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Accent colour — liveness check</h2>
+    <div class="row">
+      <button class="swatch" style="background:#FF2D2D" data-c="#FF2D2D"></button>
+      <button class="swatch" style="background:#FFB020" data-c="#FFB020"></button>
+      <button class="swatch" style="background:#37D67A" data-c="#37D67A"></button>
+      <button class="swatch" style="background:#2D9CFF" data-c="#2D9CFF"></button>
+      <button class="swatch" style="background:#C45BFF" data-c="#C45BFF"></button>
+      <button class="swatch" style="background:#FFFFFF" data-c="#FFFFFF"></button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>This control panel (PRD R4.2)</h2>
+    <div class="row">
+      <button id="ctrlExcl" class="on">Excluded from capture</button>
+    </div>
+    <p class="hint">
+      Turn this <em>off</em> and the viewer should suddenly see this panel appear in the share.
+      That confirms exclusion is doing real work rather than silently no-op'ing.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Diagnostics</h2>
+    <dl id="diag"><dt>loading…</dt><dd></dd></dl>
+  </div>
+
+  <div class="row">
+    <button id="quit" class="danger">Quit spike</button>
+  </div>
+  <p id="status"></p>
+
+<script>
+  const { invoke } = window.__TAURI__.core;
+  const statusEl = document.getElementById("status");
+  const say = (m, bad) => {
+    statusEl.textContent = m;
+    statusEl.className = bad ? "warn" : "";
+  };
+
+  // Each toggle owns its state; `on` class is the single source of truth.
+  function toggle(btn, labelOn, labelOff, fn) {
+    btn.addEventListener("click", async () => {
+      const next = !btn.classList.contains("on");
+      try {
+        await fn(next);
+        btn.classList.toggle("on", next);
+        btn.textContent = next ? labelOn : labelOff;
+        say("");
+      } catch (e) {
+        say(String(e), true);
+      }
+    });
+  }
+
+  toggle(
+    document.getElementById("vis"),
+    "Overlay visible", "Overlay hidden",
+    (on) => invoke("set_overlay_visible", { visible: on })
+  );
+
+  toggle(
+    document.getElementById("excl"),
+    "Overlay EXCLUDED (viewer can't see it)", "Exclude overlay from capture",
+    (on) => invoke("set_exclusion", { target: "overlay", excluded: on })
+  );
+
+  toggle(
+    document.getElementById("inter"),
+    "Interactive — overlay eats clicks", "Make interactive",
+    (on) => invoke("set_overlay_interactive", { interactive: on })
+  );
+
+  toggle(
+    document.getElementById("ctrlExcl"),
+    "Excluded from capture", "VISIBLE to capture",
+    (on) => invoke("set_exclusion", { target: "control", excluded: on })
+  );
+
+  document.querySelectorAll(".swatch").forEach((b) => {
+    b.addEventListener("click", () =>
+      invoke("set_overlay_color", { color: b.dataset.c }).catch((e) => say(String(e), true))
+    );
+  });
+
+  document.getElementById("quit").addEventListener("click", () => invoke("quit"));
+
+  invoke("diagnostics").then((d) => {
+    const supported = d.exclusion_supported
+      ? '<span class="pill ok">supported</span>'
+      : '<span class="pill bad">UNSUPPORTED</span>';
+    document.getElementById("diag").innerHTML = `
+      <dt>OS</dt><dd>${d.os_version}</dd>
+      <dt>Monitor</dt><dd>${d.monitor_width}×${d.monitor_height} @ (${d.monitor_x}, ${d.monitor_y})</dd>
+      <dt>Scale</dt><dd>${d.scale_factor}× (${Math.round(d.scale_factor * 100)}%)</dd>
+      <dt>Exclusion</dt><dd>${supported}</dd>`;
+    if (!d.exclusion_supported) {
+      say("SetWindowDisplayAffinity unsupported — needs Windows 10 build 19041+. Test B will fail.", true);
+    }
+  }).catch((e) => say(String(e), true));
+</script>
+</body>
+</html>

@@ -37,3 +37,7 @@ src-tauri/Cargo.lock
 
 # Zemo
 scratch/
+
+# Spike build artifacts
+spikes/*/target/
+spikes/*/gen/
