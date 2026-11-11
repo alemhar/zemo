@@ -460,7 +460,9 @@ fn main() {
                     // setup() would also need to borrow.
                     let result = match shortcut.key {
                         Code::KeyZ => toggle_mode(app.clone()),
-                        Code::KeyR => panic_reset(app.clone()),
+                        Code::KeyR if shortcut.mods.contains(Modifiers::SHIFT) => {
+                            panic_reset(app.clone())
+                        }
                         Code::KeyA => clear_shapes(app.clone()),
                         Code::Backspace => remove_shape(app.clone(), "newest".into()),
                         Code::Home => remove_shape(app.clone(), "oldest".into()),
@@ -536,7 +538,13 @@ fn main() {
                 (Shortcut::new(ctrl_alt, Code::KeyA), "Ctrl+Alt+A      clear all"),
                 (Shortcut::new(ctrl_alt, Code::Backspace), "Ctrl+Alt+Bksp   remove newest"),
                 (Shortcut::new(ctrl_alt, Code::Home), "Ctrl+Alt+Home   remove oldest"),
-                (Shortcut::new(ctrl_alt, Code::KeyR), "Ctrl+Alt+R      reset"),
+                (
+                    Shortcut::new(
+                        Some(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT),
+                        Code::KeyR,
+                    ),
+                    "Ctrl+Alt+Shift+R  reset",
+                ),
                 (
                     Shortcut::new(
                         Some(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT),

@@ -99,11 +99,11 @@
     </div>
 
     <svg class="sample" width="300" height="90" viewBox="0 0 300 90" fill="none">
-      <!-- Head-first arrow (PRD R6.0): the point is what matters, so it leads. -->
+      <!-- Tail-first arrow (PRD R6.0): drag from the start toward the target. -->
       <path d="M14 45 L120 45" stroke="var(--accent)" stroke-width="10" stroke-linecap="round"/>
       <path d="M8 45 L48 24 L40 45 L48 66 Z" fill="var(--accent)"/>
       <text x="140" y="54" fill="#fff" font-size="26" font-weight="700"
-            style="text-shadow:0 2px 10px rgba(0,0,0,.9)">head-first</text>
+            style="text-shadow:0 2px 10px rgba(0,0,0,.9)">drag to point</text>
     </svg>
   </div>
 
@@ -199,10 +199,9 @@
   }
 
   /**
-   * Head-first arrow (PRD R6.0): `a` is where the user pressed — the POINT —
-   * and `b` is the tail they drag out. Inverted from every other drawing app on
-   * purpose: the cursor is already on the thing being talked about, so aiming
-   * twice and thinking backwards mid-sentence is the thing being designed out.
+   * Tail-first arrow (PRD R6.0): press where the arrow starts, drag to the
+   * thing you're pointing at. Matches every other drawing app, so there's
+   * nothing to unlearn.
    */
   function makeArrow() {
     const s = haloed((color, w) => {
@@ -213,7 +212,7 @@
       );
       return g;
     });
-    s.update = (head, tail) => {
+    s.update = (tail, head) => {
       const dx = head.x - tail.x, dy = head.y - tail.y;
       const len = Math.hypot(dx, dy) || 1;
       const ux = dx / len, uy = dy / len;

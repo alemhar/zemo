@@ -200,7 +200,7 @@ between "using my computer" and "drawing on my computer" **is** the product.
 
 | Tool | Key | Behaviour |
 |---|---|---|
-| **Arrow** | `A` | **Head-first** — see R6.0. **The flagship tool; it is the default on first launch.** |
+| **Arrow** | `A` | **Tail-first** — see R6.0. **The flagship tool; it is the default on first launch.** |
 | **Rectangle** | `R` | Drag corner to corner. Outline only; `Shift` constrains to square. |
 | **Ellipse** | `O` | Drag bounding box; `Shift` constrains to circle. |
 | **Line** | `L` | Straight line; `Shift` snaps to 15° increments. |
@@ -210,27 +210,32 @@ between "using my computer" and "drawing on my computer" **is** the product.
 | **Step numbers** | `N` | Click to drop an auto-incrementing numbered badge (1, 2, 3…) for "do this, then this" walkthroughs. Counter resets on clear. |
 | **Eraser** | `E` | Click a mark to delete it (object eraser, not pixel eraser). |
 
-#### R6.0 — Arrow direction: head-first, tail-second
+#### R6.0 — Arrow direction: tail-first
 
-**The first click places the arrow's point (head). The second click/release places its tail.**
-This is the inverse of every drawing app, and it is deliberate.
+**The first click places the arrow's tail. Dragging out sets the point (head).**
+This matches every other drawing tool, so there is nothing to unlearn.
 
-*Rationale:* the presenter already knows what they are pointing **at** — their attention and their
-cursor are on the target. Forcing them to first guess where the tail should start, then drag to the
-target, means aiming twice and thinking backwards mid-sentence. Head-first lets them click the thing
-they're talking about immediately and then sweep the tail out into whatever empty space is free.
-
-- **R6.0.1** — Interaction supports both idioms: *click-release-click* (click head, move, click tail)
-  and *press-drag-release* (press on head, drag out, release at tail). Both produce an identical arrow.
-- **R6.0.2** — During the drag, a live preview arrow renders with its **head pinned at the first point**,
+- **R6.0.1** — Interaction supports both idioms: *click-release-click* (click tail, move, click
+  head) and *press-drag-release* (press at the tail, drag out, release on the target). Both
+  produce an identical arrow.
+- **R6.0.2** — During the drag, a live preview arrow renders with its **head tracking the cursor**,
   so the direction is unambiguous before commit.
 - **R6.0.3** — `Esc` or right-click mid-draw cancels the in-progress arrow without committing.
-- **R6.0.4** — `Shift` while placing the tail snaps the shaft to 15° increments.
+- **R6.0.4** — `Shift` while placing the head snaps the shaft to 15° increments.
 - **R6.0.5** — Filled triangular head; head size scales with stroke width.
-- **R6.0.6** — A **"tail-first (classic)"** toggle exists in Settings for users who find the inverse
-  jarring. Default is **head-first**. This also applies to the Line tool's optional end-cap.
 
-**Styling**
+##### Considered and rejected: head-first
+
+An earlier draft specified the inverse — press on the target to place the **point**, then drag the
+tail out into free space. The argument was that the presenter's cursor is already on the thing they
+are talking about, so tail-first makes them aim twice and think backwards mid-sentence.
+
+It was built and tried in the Phase 0 spike, and reversed on use. The theoretical advantage did not
+survive contact: the inversion costs more in surprise than it saves in aiming, and every muscle
+memory a user brings from other tools fights it.
+
+Head-first may return later as an **option**, off by default. It is not worth a setting until
+someone asks for it.**Styling**
 
 - **R6.1** — 8 preset colours on `1`–`8`: red, orange, yellow, green, cyan, blue, magenta, white.
   Default red. Colours chosen for contrast against both light and dark application backgrounds.
@@ -408,7 +413,7 @@ Five hard Windows problems are already solved in the Klipp codebase and port dir
 | **R5** | Click-through toggle races leave the desktop input-blocked | 🟠 High | Panic hotkey (R5.7); a watchdog that forces pass-through if the overlay is armed with no input for 10 minutes |
 | **R6** | Full-screen exclusive games/apps punch through always-on-top | 🟡 Medium | Out of scope — Zemo targets desktop app sharing |
 | **R7** | Some conferencing apps' capture paths exclude layered windows | 🟡 Medium | Covered by the R1 spike; if it bites only one vendor, document it |
-| **R8** | Head-first arrows confuse users coming from other tools | 🟢 Low | Live preview with the head pinned (R6.0.2) makes direction obvious; classic mode available (R6.0.6) |
+| **R8** | ~~Head-first arrows confuse users~~ | ✅ Closed | Tried in the Phase 0 spike and reversed — arrows are tail-first (R6.0). The risk was real; the mitigation was to drop the idea. |
 
 ### Phasing
 
@@ -450,6 +455,7 @@ These were open at draft time and are now settled. Recorded here so the reasonin
 | 2 | Should marks follow the window underneath them? | **No.** Marks are screen-anchored. Window tracking is real Win32 work that still breaks on scroll, and the actual usage loop is point → talk → clear. Parked as a v2 item. | R5.12, §10 |
 | 3 | Licensing model? | **MIT, open-source, free.** Public repo, GitHub releases, no accounts, no licence keys, no paid tier — same posture as Klipp. The §2 non-goals against licensing servers and telemetry are therefore permanent, not provisional. | A6, §2 |
 | 4 | Coexistence with Klipp? | **Not a concern.** The two won't run simultaneously. No shared tray, registry, or crate; Klipp is a source to copy from, not a dependency. | A5, §6.3 |
+| 5 | Arrow direction? | **Tail-first**, reversing an earlier head-first decision. Head-first was built in the Phase 0 spike and rejected on use — the inversion cost more in surprise than it saved in aiming. | R6.0 |
 
 ### Still genuinely open
 
