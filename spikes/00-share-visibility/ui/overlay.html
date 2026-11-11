@@ -123,6 +123,10 @@
 
   let tool = "none";
   let stroke = 6;
+
+  // Single-letter tool keys (PRD §6.3). Safe unmodified because the overlay only
+  // holds focus while armed, so these can never leak into the app underneath.
+  const TOOL_KEYS = { a: "arrow", r: "rect", o: "ellipse", p: "pen" };
   let accent = () =>
     getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#FF2D2D";
 
@@ -312,7 +316,15 @@
     // armed — they can't leak into the app underneath.
     if (e.ctrlKey && e.key.toLowerCase() === "z") { removeNewest(); return; }
     if (e.key === "Backspace") { removeNewest(); return; }
-    if (e.key === "Home") { removeOldest(); }
+    if (e.key === "Home") { removeOldest(); return; }
+
+    // Tool switching. Ignored while a modifier is held so the global
+    // Ctrl+Alt+* bindings keep their meaning.
+    if (!e.ctrlKey && !e.altKey && !e.metaKey) {
+      const next = TOOL_KEYS[e.key.toLowerCase()];
+      // Round-trip through the backend so the control panel stays in sync.
+      if (next && next !== tool) invoke?.("set_tool", { tool: next });
+    }
   });
 
   // ── State from the control panel ───────────────────────────────────────────
@@ -321,7 +333,7 @@
     document.body.classList.toggle("armed", tool !== "none");
     legend.innerHTML = tool === "none"
       ? "overlay • click-through • NOT capture-excluded"
-      : `drawing: <b>${tool}</b> • drag to draw • right-click cancels • Esc exits`;
+      : `drawing: <b>${tool}</b> • <b>A</b>rrow <b>R</b>ect <b>O</b>val <b>P</b>en • Esc exits`;
   }
   setTool("none");
 

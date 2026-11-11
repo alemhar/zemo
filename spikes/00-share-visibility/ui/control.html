@@ -56,6 +56,7 @@
     <dl style="margin-top:12px">
       <dt><code>Ctrl+Alt+Z</code></dt><dd>draw &#8644; pass-through</dd>
       <dt><code>Esc</code></dt><dd>back to pass-through (keeps marks)</dd>
+      <dt><code>A R O P</code></dt><dd>arrow / rectangle / oval / pen &mdash; <em>while drawing</em></dd>
       <dt><code>Ctrl+Alt+A</code></dt><dd>clear all marks</dd>
       <dt><code>Ctrl+Alt+&#9003;</code></dt><dd>remove <strong>newest</strong> mark</dd>
       <dt><code>Ctrl+Alt+Home</code></dt><dd>remove <strong>oldest</strong> mark</dd>
@@ -238,6 +239,10 @@
   function renderMode(armed, tool) {
     modePill.className = "pill " + (armed ? "bad" : "ok");
     modePill.textContent = armed ? `drawing: ${tool}` : "pass-through";
+    // The tool can change from the keyboard, so the lit button follows the
+    // backend's state rather than the last button that was clicked.
+    document.querySelectorAll(".tool").forEach((b) =>
+      b.classList.toggle("on", armed && b.dataset.t === tool));
   }
 
   document.querySelectorAll(".tool").forEach((b) => {
