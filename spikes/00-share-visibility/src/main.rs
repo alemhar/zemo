@@ -15,8 +15,9 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+use std::time::Instant;
 
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -24,9 +25,12 @@ use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut,
 #[cfg(windows)]
 use windows::Win32::Foundation::HWND;
 #[cfg(windows)]
+use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongPtrW, SetWindowDisplayAffinity, SetWindowLongPtrW, GWL_EXSTYLE,
-    WDA_EXCLUDEFROMCAPTURE, WDA_NONE, WS_EX_LAYERED, WS_EX_TRANSPARENT,
+    CallNextHookEx, GetWindowLongPtrW, SetWindowDisplayAffinity, SetWindowLongPtrW,
+    SetWindowsHookExW, UnhookWindowsHookEx, GWL_EXSTYLE, HHOOK, MSLLHOOKSTRUCT, WDA_EXCLUDEFROMCAPTURE,
+    WDA_NONE, WH_MOUSE_LL, WM_MOUSEMOVE, WS_EX_LAYERED, WS_EX_TRANSPARENT,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -239,6 +243,111 @@ fn refit_overlay(app: tauri::AppHandle) -> Result<(i32, i32), String> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Spotlight
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Dims the screen except a bright circle that follows the cursor. The catch:
+// the overlay stays click-through while spotlighting (you keep driving your
+// app), which means the webview receives no mouse events at all. So cursor
+// position has to come from a low-level Win32 hook instead — the same
+// WH_MOUSE_LL approach Klipp uses for click ripples.
+
+static SPOT_ON: AtomicBool = AtomicBool::new(false);
+static MOUSE_HOOK: Mutex<Option<isize>> = Mutex::new(None);
+static HOOK_APP: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
+/// Primary monitor origin, so hook coordinates can be made window-local.
+static ORIGIN: Mutex<(i32, i32)> = Mutex::new((0, 0));
+static LAST_EMIT_MS: AtomicU64 = AtomicU64::new(0);
+static CLOCK: OnceLock<Instant> = OnceLock::new();
+
+#[cfg(windows)]
+unsafe extern "system" fn mouse_proc(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
+    if code >= 0 && w.0 as u32 == WM_MOUSEMOVE && SPOT_ON.load(Ordering::Relaxed) {
+        // Throttle to ~60fps. The hook fires on every raw mouse move, which is
+        // far more often than the overlay can usefully repaint.
+        let now = CLOCK.get_or_init(Instant::now).elapsed().as_millis() as u64;
+        if now.saturating_sub(LAST_EMIT_MS.load(Ordering::Relaxed)) >= 16 {
+            LAST_EMIT_MS.store(now, Ordering::Relaxed);
+
+            // try_lock, never lock: this runs on the input thread, and blocking
+            // here would stall mouse input system-wide.
+            if let (Ok(origin), Ok(app)) = (ORIGIN.try_lock(), HOOK_APP.try_lock()) {
+                if let Some(app) = app.as_ref() {
+                    let info = unsafe { &*(l.0 as *const MSLLHOOKSTRUCT) };
+                    let _ = app.emit_to(
+                        "overlay",
+                        "cursor",
+                        (info.pt.x - origin.0, info.pt.y - origin.1),
+                    );
+                }
+            }
+        }
+    }
+    unsafe { CallNextHookEx(None, code, w, l) }
+}
+
+#[cfg(windows)]
+fn set_hook_installed(app: &tauri::AppHandle, install: bool) -> Result<(), String> {
+    let mut guard = MOUSE_HOOK.lock().map_err(|e| e.to_string())?;
+    match (install, guard.take()) {
+        (true, None) => {
+            // WH_MOUSE_LL requires the installing thread to pump messages, which
+            // is true of the main thread and not of a Tauri command's thread.
+            let (tx, rx) = std::sync::mpsc::channel();
+            app.run_on_main_thread(move || {
+                let r = unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), None, 0) };
+                let _ = tx.send(r.map(|h| h.0 as isize).map_err(|e| e.to_string()));
+            })
+            .map_err(|e| e.to_string())?;
+            *guard = Some(rx.recv().map_err(|e| e.to_string())??);
+        }
+        (false, Some(h)) => unsafe {
+            let _ = UnhookWindowsHookEx(HHOOK(h as *mut _));
+        },
+        // Already in the requested state; put back what we took.
+        (true, Some(h)) => *guard = Some(h),
+        (false, None) => {}
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn set_hook_installed(_app: &tauri::AppHandle, _install: bool) -> Result<(), String> {
+    Ok(())
+}
+
+#[tauri::command]
+fn set_spotlight(app: tauri::AppHandle, on: bool) -> Result<(), String> {
+    if on {
+        // Cache the monitor origin once so the hook doesn't query it per move.
+        if let Ok(Some(m)) = window_or_err(&app, "overlay")?.primary_monitor() {
+            *ORIGIN.lock().map_err(|e| e.to_string())? = (m.position().x, m.position().y);
+        }
+        *HOOK_APP.lock().map_err(|e| e.to_string())? = Some(app.clone());
+    }
+    SPOT_ON.store(on, Ordering::Relaxed);
+    set_hook_installed(&app, on)?;
+
+    app.emit_to("overlay", "spotlight", on)
+        .map_err(|e| e.to_string())?;
+    app.emit_to("control", "spotlight-changed", on)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn toggle_spotlight(app: tauri::AppHandle) -> Result<(), String> {
+    let on = SPOT_ON.load(Ordering::Relaxed);
+    set_spotlight(app, !on)
+}
+
+/// Grow or shrink the bright circle. The overlay clamps the result.
+#[tauri::command]
+fn spotlight_size(app: tauri::AppHandle, delta: i32) -> Result<(), String> {
+    app.emit_to("overlay", "spotlight-size", delta)
+        .map_err(|e| e.to_string())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Pass-through <-> draw mode
 // ─────────────────────────────────────────────────────────────────────────────
 //
@@ -335,6 +444,9 @@ fn set_test_graphics(app: tauri::AppHandle, visible: bool) -> Result<(), String>
 #[tauri::command]
 fn panic_reset(app: tauri::AppHandle) -> Result<(), String> {
     clear_shapes(app.clone())?;
+    // Leaving the screen dimmed would be the worst possible failure state for a
+    // panic key, so the spotlight goes down too.
+    set_spotlight(app.clone(), false)?;
     apply_mode(&app, false)
 }
 
@@ -464,6 +576,9 @@ fn main() {
                             panic_reset(app.clone())
                         }
                         Code::KeyA => clear_shapes(app.clone()),
+                        Code::KeyS => toggle_spotlight(app.clone()),
+                        Code::BracketLeft => spotlight_size(app.clone(), -1),
+                        Code::BracketRight => spotlight_size(app.clone(), 1),
                         Code::Backspace => remove_shape(app.clone(), "newest".into()),
                         Code::Home => remove_shape(app.clone(), "oldest".into()),
                         // Shift is required so a stray Ctrl+Alt+Q can't kill the
@@ -493,6 +608,9 @@ fn main() {
             report_count,
             set_stroke,
             set_test_graphics,
+            set_spotlight,
+            toggle_spotlight,
+            spotlight_size,
             panic_reset,
             geometry_check,
             refit_overlay,
@@ -536,6 +654,9 @@ fn main() {
             for (sc, name) in [
                 (Shortcut::new(ctrl_alt, Code::KeyZ), "Ctrl+Alt+Z      toggle draw"),
                 (Shortcut::new(ctrl_alt, Code::KeyA), "Ctrl+Alt+A      clear all"),
+                (Shortcut::new(ctrl_alt, Code::KeyS), "Ctrl+Alt+S      spotlight"),
+                (Shortcut::new(ctrl_alt, Code::BracketLeft), "Ctrl+Alt+[      smaller spot"),
+                (Shortcut::new(ctrl_alt, Code::BracketRight), "Ctrl+Alt+]      bigger spot"),
                 (Shortcut::new(ctrl_alt, Code::Backspace), "Ctrl+Alt+Bksp   remove newest"),
                 (Shortcut::new(ctrl_alt, Code::Home), "Ctrl+Alt+Home   remove oldest"),
                 (

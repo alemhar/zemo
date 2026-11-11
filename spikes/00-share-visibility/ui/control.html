@@ -58,6 +58,8 @@
       <dt><code>Esc</code></dt><dd>back to pass-through (keeps marks)</dd>
       <dt><code>A R O P</code></dt><dd>arrow / rectangle / oval / pen &mdash; <em>while drawing</em></dd>
       <dt><code>Ctrl+Alt+A</code></dt><dd>clear all marks</dd>
+      <dt><code>Ctrl+Alt+S</code></dt><dd>spotlight on / off</dd>
+      <dt><code>Ctrl+Alt+[</code> <code>]</code></dt><dd>spotlight smaller / bigger</dd>
       <dt><code>Ctrl+Alt+&#9003;</code></dt><dd>remove <strong>newest</strong> mark</dd>
       <dt><code>Ctrl+Alt+Home</code></dt><dd>remove <strong>oldest</strong> mark</dd>
       <dt><code>Ctrl+Alt+Shift+R</code></dt><dd>reset — clear + pass-through</dd>
@@ -78,6 +80,7 @@
       <button class="tool" data-t="pen">Pen</button>
     </div>
     <div class="row" style="margin-top:9px">
+      <button id="spot">Spotlight</button>
       <button id="pass">Pass through now</button>
       <button id="gfx" class="on">Test graphics on</button>
     </div>
@@ -251,6 +254,19 @@
       b.classList.add("on");
       call("set_tool", { tool: b.dataset.t }).catch((e) => say(String(e), true));
     });
+  });
+
+  toggle(
+    document.getElementById("spot"),
+    "Spotlight ON", "Spotlight",
+    (on) => invoke("set_spotlight", { on })
+  );
+
+  // The hotkey can toggle it too, so the button follows backend state.
+  window.__TAURI__.event.listen("spotlight-changed", (e) => {
+    const b = document.getElementById("spot");
+    b.classList.toggle("on", !!e.payload);
+    b.textContent = e.payload ? "Spotlight ON" : "Spotlight";
   });
 
   document.getElementById("pass").addEventListener("click", () =>

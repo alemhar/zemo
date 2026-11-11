@@ -67,6 +67,11 @@
 
   .sample { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); }
 
+  /* ── Spotlight ───────────────────────────────────────────────────────────── */
+  /* Sits under #draw so annotations stay bright on top of the dim (PRD R6.10). */
+  #spot { position: fixed; inset: 0; width: 100%; height: 100%; display: none; }
+  #spot.on { display: block; }
+
   /* ── Drawing surface ─────────────────────────────────────────────────────── */
 
   #draw { position: fixed; inset: 0; width: 100%; height: 100%; }
@@ -106,6 +111,22 @@
             style="text-shadow:0 2px 10px rgba(0,0,0,.9)">drag to point</text>
     </svg>
   </div>
+
+  <svg id="spot">
+    <defs>
+      <!-- White keeps the dim, black punches the hole through it. A soft edge
+           reads as a light cone rather than a cookie-cutter circle. -->
+      <radialGradient id="falloff">
+        <stop offset="70%" stop-color="black" stop-opacity="1"/>
+        <stop offset="100%" stop-color="black" stop-opacity="0"/>
+      </radialGradient>
+      <mask id="spotmask">
+        <rect width="100%" height="100%" fill="white"/>
+        <circle id="hole" cx="50%" cy="50%" r="160" fill="url(#falloff)"/>
+      </mask>
+    </defs>
+    <rect width="100%" height="100%" fill="rgba(0,0,0,.62)" mask="url(#spotmask)"/>
+  </svg>
 
   <!-- Drawn shapes live here. Above the test graphics so annotations always win. -->
   <svg id="draw"></svg>
@@ -326,6 +347,17 @@
     }
   });
 
+  // ── Spotlight ──────────────────────────────────────────────────────────────
+  const spot = document.getElementById("spot");
+  const hole = document.getElementById("hole");
+  let spotR = 160;
+  const SPOT_MIN = 60, SPOT_MAX = 520, SPOT_STEP = 40;
+
+  function moveSpot(x, y) {
+    hole.setAttribute("cx", x);
+    hole.setAttribute("cy", y);
+  }
+
   // ── State from the control panel ───────────────────────────────────────────
   function setTool(next) {
     tool = next;
@@ -349,6 +381,21 @@
     });
     event.listen("test-graphics", (e) => {
       testgfx.style.display = e.payload ? "" : "none";
+    });
+
+    event.listen("spotlight", (e) => spot.classList.toggle("on", !!e.payload));
+
+    event.listen("spotlight-size", (e) => {
+      spotR = Math.min(SPOT_MAX, Math.max(SPOT_MIN, spotR + e.payload * SPOT_STEP));
+      hole.setAttribute("r", spotR);
+    });
+
+    // Cursor comes from a Win32 hook, in physical pixels relative to the
+    // monitor origin. CSS pixels are what the SVG wants, hence the DPR divide.
+    event.listen("cursor", (e) => {
+      const [px, py] = e.payload;
+      const dpr = window.devicePixelRatio || 1;
+      moveSpot(px / dpr, py / dpr);
     });
   }
 </script>
