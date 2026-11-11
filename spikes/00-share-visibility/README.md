@@ -9,6 +9,14 @@ cargo run
 
 No npm install and no Tauri CLI needed — the frontend is static HTML in `ui/`.
 
+Before going on a call, press **Check geometry** in the control panel. It verifies the overlay's
+rendered area actually covers the monitor — frameless Windows windows have an invisible resize
+border that shifts WebView2 content off the screen edge, and the amount varies by Windows version,
+DPI and theme. The card reports the measured offset, the per-edge gap, and what to do if it's off.
+
+To screenshot the control panel for a bug report, launch with `ZEMO_SPIKE_NO_EXCLUDE=1` — capture
+exclusion blocks ordinary screenshot tools too.
+
 **Quit using the control panel's "Quit spike" button.** Hard-killing the process leaves a stale
 WebView2 lock and the next launch fails with `0x800700AA`. If that happens:
 

@@ -13,16 +13,6 @@
     },
     "windows": [
       {
-        "label": "control",
-        "url": "control.html",
-        "title": "Zemo — Phase 0 Share Visibility Spike",
-        "width": 520,
-        "height": 740,
-        "resizable": true,
-        "alwaysOnTop": true,
-        "center": true
-      },
-      {
         "label": "overlay",
         "url": "overlay.html",
         "title": "",
@@ -36,12 +26,26 @@
         "shadow": false,
         "focus": false,
         "visible": false
+      },
+      {
+        "label": "control",
+        "url": "control.html",
+        "title": "Zemo — Phase 0 Share Visibility Spike",
+        "width": 520,
+        "height": 740,
+        "resizable": true,
+        "alwaysOnTop": true,
+        "center": true
       }
     ]
   },
   "bundle": {
     "active": false,
     "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"]
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/icon.ico"
+    ]
   }
 }

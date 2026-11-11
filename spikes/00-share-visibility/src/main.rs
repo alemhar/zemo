@@ -124,6 +124,117 @@ fn window_or_err(app: &tauri::AppHandle, label: &str) -> Result<tauri::WebviewWi
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Overlay geometry — invisible window chrome
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// On Windows a frameless window still has a non-client area: an invisible
+// resize border, typically ~8px left/right/bottom and 0 on top. `set_position`
+// positions the OUTER rect (border included) but WebView2 renders inside the
+// INNER (client) rect. Ask for the window at (0,0) and the content can land at
+// (8,0) — the overlay is then shifted off the monitor edge, and for Zemo that
+// means annotations land a few pixels away from where the user pointed.
+//
+// The amount varies by Windows version, DPI and theme, so it must be MEASURED
+// per machine rather than assumed. Measure inner - outer, then shift the outer
+// window back by that delta so the inner rect lands exactly on the monitor.
+
+/// Fit the overlay to the primary monitor. Returns the measured chrome offset
+/// `(dx, dy)` — `(0, 0)` means this machine has no offset.
+fn fit_overlay_to_monitor(overlay: &tauri::WebviewWindow) -> Result<(i32, i32), String> {
+    let monitor = overlay
+        .primary_monitor()
+        .map_err(|e| e.to_string())?
+        .ok_or("no primary monitor")?;
+    let pos = monitor.position();
+    let size = monitor.size();
+
+    // Physical pixels throughout — one coordinate contract end to end.
+    overlay
+        .set_position(PhysicalPosition::new(pos.x, pos.y))
+        .map_err(|e| e.to_string())?;
+    overlay
+        .set_size(PhysicalSize::new(size.width, size.height))
+        .map_err(|e| e.to_string())?;
+
+    let outer = overlay.outer_position().map_err(|e| e.to_string())?;
+    let inner = overlay.inner_position().map_err(|e| e.to_string())?;
+    let dx = inner.x - outer.x;
+    let dy = inner.y - outer.y;
+
+    if dx != 0 || dy != 0 {
+        overlay
+            .set_position(PhysicalPosition::new(pos.x - dx, pos.y - dy))
+            .map_err(|e| e.to_string())?;
+    }
+
+    // A resize or reposition reverts WebView2's background colour, so
+    // transparency has to be re-applied after fitting, never before.
+    #[cfg(windows)]
+    apply_webview_transparency(overlay).map_err(|e| e.to_string())?;
+
+    Ok((dx, dy))
+}
+
+#[derive(serde::Serialize)]
+struct GeometryCheck {
+    monitor: [i32; 4],
+    inner: [i32; 4],
+    chrome_dx: i32,
+    chrome_dy: i32,
+    /// Per-edge error in physical pixels; 0 means the overlay edge sits exactly
+    /// on the monitor edge. Positive = overlay edge is inside the monitor.
+    gap_left: i32,
+    gap_top: i32,
+    gap_right: i32,
+    gap_bottom: i32,
+    ok: bool,
+}
+
+/// Verify the overlay's *rendered* area actually covers the monitor, rather than
+/// trusting that the compensation worked. This is what the tester reads before
+/// going on a call — a silently misaligned overlay would invalidate the spike.
+#[tauri::command]
+fn geometry_check(app: tauri::AppHandle) -> Result<GeometryCheck, String> {
+    let overlay = window_or_err(&app, "overlay")?;
+    let monitor = overlay
+        .primary_monitor()
+        .map_err(|e| e.to_string())?
+        .ok_or("no primary monitor")?;
+    let mpos = monitor.position();
+    let msize = monitor.size();
+
+    let outer = overlay.outer_position().map_err(|e| e.to_string())?;
+    let inner = overlay.inner_position().map_err(|e| e.to_string())?;
+    let isize_ = overlay.inner_size().map_err(|e| e.to_string())?;
+
+    let gap_left = inner.x - mpos.x;
+    let gap_top = inner.y - mpos.y;
+    let gap_right = (mpos.x + msize.width as i32) - (inner.x + isize_.width as i32);
+    let gap_bottom = (mpos.y + msize.height as i32) - (inner.y + isize_.height as i32);
+
+    Ok(GeometryCheck {
+        monitor: [mpos.x, mpos.y, msize.width as i32, msize.height as i32],
+        inner: [inner.x, inner.y, isize_.width as i32, isize_.height as i32],
+        chrome_dx: inner.x - outer.x,
+        chrome_dy: inner.y - outer.y,
+        gap_left,
+        gap_top,
+        gap_right,
+        gap_bottom,
+        ok: gap_left == 0 && gap_top == 0 && gap_right == 0 && gap_bottom == 0,
+    })
+}
+
+/// Re-run the fit. Gives a tester whose geometry check failed something to try
+/// before giving up — a second pass measures chrome against the already-shifted
+/// window and usually converges.
+#[tauri::command]
+fn refit_overlay(app: tauri::AppHandle) -> Result<(i32, i32), String> {
+    let overlay = window_or_err(&app, "overlay")?;
+    fit_overlay_to_monitor(&overlay)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Commands driven by the control panel
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -235,6 +346,8 @@ fn main() {
             set_overlay_interactive,
             set_overlay_visible,
             set_overlay_color,
+            geometry_check,
+            refit_overlay,
             diagnostics,
             quit
         ])
@@ -243,29 +356,14 @@ fn main() {
                 .get_webview_window("overlay")
                 .expect("overlay window missing from tauri.conf.json");
 
-            // Size the overlay to the full primary monitor in PHYSICAL pixels.
-            // Physical throughout keeps one coordinate contract end to end, which
-            // is what Klipp learned the hard way on mixed-DPI setups.
-            if let Ok(Some(monitor)) = overlay.primary_monitor() {
-                let pos = monitor.position();
-                let size = monitor.size();
-
-                overlay.set_position(PhysicalPosition::new(pos.x, pos.y))?;
-                overlay.set_size(PhysicalSize::new(size.width, size.height))?;
-
-                // Frameless Windows windows carry invisible chrome (~8px on some
-                // sides). set_position sets the OUTER rect but WebView2 renders in
-                // the INNER one, so measure the delta and compensate — otherwise
-                // the overlay's content is offset from the monitor it's covering.
-                if let (Ok(outer), Ok(inner)) = (overlay.outer_position(), overlay.inner_position())
-                {
-                    let dx = inner.x - outer.x;
-                    let dy = inner.y - outer.y;
-                    if dx != 0 || dy != 0 {
-                        eprintln!("[spike] compensating window chrome: dx={dx} dy={dy}");
-                        overlay.set_position(PhysicalPosition::new(pos.x - dx, pos.y - dy))?;
-                    }
+            // Size and position the overlay to exactly cover the primary monitor,
+            // compensating for invisible window chrome. See fit_overlay_to_monitor.
+            match fit_overlay_to_monitor(&overlay) {
+                Ok((dx, dy)) if dx != 0 || dy != 0 => {
+                    eprintln!("[spike] compensated invisible window chrome: dx={dx} dy={dy}")
                 }
+                Ok(_) => eprintln!("[spike] no window chrome offset on this machine"),
+                Err(e) => eprintln!("[spike] overlay fit FAILED: {e}"),
             }
 
             // Transparency AFTER the resize — a resize reverts the WebView2
@@ -287,9 +385,16 @@ fn main() {
             // The control panel IS capture-excluded (PRD R4.2) — viewers should
             // never see the presenter's controls.
             if let Some(control) = app.get_webview_window("control") {
-                match set_capture_excluded(&control, true) {
-                    Ok(()) => eprintln!("[spike] control panel excluded from capture"),
-                    Err(e) => eprintln!("[spike] control panel exclusion FAILED: {e}"),
+                // Escape hatch: exclusion also blocks ordinary screenshot tools, so
+                // there is no way to capture the panel for a bug report. Setting
+                // ZEMO_SPIKE_NO_EXCLUDE=1 leaves it capturable.
+                if std::env::var("ZEMO_SPIKE_NO_EXCLUDE").is_ok() {
+                    eprintln!("[spike] ZEMO_SPIKE_NO_EXCLUDE set — control panel left capturable");
+                } else {
+                    match set_capture_excluded(&control, true) {
+                        Ok(()) => eprintln!("[spike] control panel excluded from capture"),
+                        Err(e) => eprintln!("[spike] control panel exclusion FAILED: {e}"),
+                    }
                 }
             }
 

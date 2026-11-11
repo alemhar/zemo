@@ -50,17 +50,48 @@ cargo run
 
 No npm install, no Tauri CLI — the frontend is static HTML served from `ui/`.
 
+> To screenshot the control panel for a bug report, launch with `ZEMO_SPIKE_NO_EXCLUDE=1` —
+> capture exclusion blocks ordinary screenshot tools too, so the panel would otherwise come out
+> blank or missing.
+>
 > **Quit with the panel's "Quit spike" button**, not Ctrl+C. Hard-killing the process leaves a
 > stale lock in the WebView2 user-data folder, and the next launch fails with
 > `0x800700AA "The requested resource is in use."` Recovery:
 > `Remove-Item -Recurse -Force "$env:LOCALAPPDATA\com.alemhar.zemo.spike"`
 
+## Invisible window chrome — and why the spike checks for it
+
+On Windows a frameless window still has a non-client area: an **invisible resize border**,
+typically ~8px on left/right/bottom and 0 on top. `set_position` positions the **outer** rect
+(border included), but WebView2 renders inside the **inner** (client) rect. Ask for the window at
+(0, 0) and the content can land at (8, 0) — the overlay ends up shifted off the monitor edge.
+
+For a spike that is cosmetic. For Zemo it is a correctness bug: every annotation would land a few
+pixels away from where the user pointed, and the screen-edge frame would be clipped.
+
+The offset **varies by Windows version, DPI and theme**, so it cannot be hardcoded. The fix
+(ported from Klipp) is to measure it per machine — `inner_position - outer_position` — and shift
+the outer window back by that delta so the inner rect lands exactly on the monitor.
+
+Measuring alone isn't enough, though: on a machine where compensation doesn't converge, a tester
+would see a subtly misaligned overlay and have no idea anything was wrong. So the control panel
+has an **Overlay geometry** card that verifies the *rendered* result rather than trusting the
+compensation:
+
+- reports the measured chrome offset, and says plainly when a machine has none
+- reports the **per-edge gap** between the overlay and the monitor — all zeros means a true fit
+- gives a pass/fail verdict, and on failure prints concrete remediation: re-fit, drop to 100%
+  scaling, then record the machine's build/scale/gaps as a Phase 1 finding
+
+**Run this card before going on a call.** A misaligned overlay invalidates the visibility result.
+
 ## Test protocol
 
 Needs a second participant — a phone on the call is enough.
 
-1. Launch the spike. Confirm the red frame touches all four screen edges (if a side is missing,
-   the chrome compensation in `main.rs` is wrong for this machine).
+1. Launch the spike. In the **Overlay geometry** card, confirm the verdict reads `aligned` and all
+   four edge gaps are `0`. If not, follow the remediation steps the card prints. Visually confirm
+   the red frame touches all four screen edges.
 2. Join a call and share **Screen / Entire Screen — not a window**.
 3. **Test A — the overlay is visible.** Ask the viewer: *can you see a red frame and a counting
    clock?* Also ask whether the clock is **moving**.
@@ -85,11 +116,12 @@ while the spike was running — the same class of capture path as gdigrab.
 | Check | Result |
 |---|---|
 | Overlay present in the captured frame | ✅ frame, corners, headline, arrow and clock all captured |
-| Overlay covers the full monitor | ✅ frame touches all four edges; chrome compensation reported `dx=0 dy=0` |
+| Overlay covers the full monitor | ✅ geometry check `aligned` — overlay 1600×900 @ (0,0) vs monitor 1600×900 @ (0,0), edge gaps L/T/R/B all 0 |
+| Invisible window chrome | ✅ **none on this machine** (`dx=0 dy=0`) — compensation path untested here, so it still needs a machine that has an offset |
 | Transparency genuinely per-pixel | ✅ desktop and terminal fully legible through the overlay |
 | WebView2 transparency COM call | ✅ no `cast`/`SetDefaultBackgroundColor` errors logged |
 | Control panel **absent** from the captured frame | ✅ `WDA_EXCLUDEFROMCAPTURE` held, despite the window being on-screen and always-on-top |
-| `SetWindowDisplayAffinity` supported | ✅ logged `control panel excluded from capture` |
+| `SetWindowDisplayAffinity` supported | ✅ build 10.0.19045.6456 ≥ 19041; logged `control panel excluded from capture` |
 
 This is a genuine signal on both halves of R4.2 — the overlay is captured, the excluded window is
 not — but **it is a proxy, not the answer.** GDI capture is not what Teams and Zoom use.
@@ -130,6 +162,13 @@ Browser `getDisplayMedia` is a third capture path and worth one pass if a tester
 | **Test A fails on one platform** | 🟡 Ship for the platform that works, document the other. Reprioritise the virtual-camera path from §10 into v1.x. |
 | **Test A fails on both** | 🔴 Stop. The overlay architecture cannot deliver the product. Virtual camera becomes the v1 architecture and the PRD needs a substantial rewrite. |
 
+## Bugs found while building the spike
+
+| Bug | Cause | Fix | Carry into Phase 1 |
+|---|---|---|---|
+| Control panel showed `no window labelled 'overlay'`; diagnostics stuck on "loading…" | The control window's scripts ran before Tauri had finished creating the overlay window — a startup race. | Overlay declared first in `tauri.conf.json`, **plus** a retry wrapper in the panel's JS, since creation order is not a contract. | Any cross-window command needs to tolerate the target not existing yet. Don't rely on config order. |
+| Second launch failed with `0x800700AA "The requested resource is in use."` | A hard-killed process left a stale lock in the WebView2 user-data folder. | Delete `%LOCALAPPDATA%\com.alemhar.zemo.spike`. | The real app should use a per-launch user-data folder or shut its webviews down cleanly, or users will hit this after any crash. |
+
 ## Follow-ups regardless of outcome
 
 - Feed the Test C result into the R4.4 detection heuristic — knowing exactly what a window share
@@ -138,3 +177,8 @@ Browser `getDisplayMedia` is a third capture path and worth one pass if a tester
   use a per-launch user-data folder or shut down its webviews cleanly on exit.
 - `set_click_through_preserving_layered` and `apply_webview_transparency` ported from Klipp without
   modification and worked first try. They are safe to lift wholesale into Phase 1.
+- **The chrome-compensation path is still unproven**, because this machine reports a zero offset.
+  Run the geometry card on a machine at 125%/150% scaling before trusting it — that is where a
+  non-zero offset is most likely to appear.
+- Promote the geometry check into the real app as a startup self-test: silently misplacing every
+  annotation by 8px is exactly the kind of bug that ships unnoticed.

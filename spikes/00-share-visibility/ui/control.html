@@ -104,6 +104,23 @@
   </div>
 
   <div class="card">
+    <h2>Overlay geometry — run this before the call</h2>
+    <div class="row">
+      <button id="geo">Check geometry</button>
+      <button id="refit">Re-fit overlay</button>
+      <span id="geoVerdict"></span>
+    </div>
+    <div id="geoBody"></div>
+    <p class="hint">
+      Frameless Windows windows have an <strong>invisible</strong> resize border (often ~8px on
+      left/right/bottom, 0 on top). Windows positions the <em>outer</em> rect including that border,
+      but WebView2 draws inside the <em>inner</em> one — so without compensation the overlay sits
+      shifted off the monitor edge. The amount varies by Windows version, DPI and theme, so it is
+      measured on each machine rather than assumed.
+    </p>
+  </div>
+
+  <div class="card">
     <h2>Diagnostics</h2>
     <dl id="diag"><dt>loading…</dt><dd></dd></dl>
   </div>
@@ -116,6 +133,24 @@
 <script>
   const { invoke } = window.__TAURI__.core;
   const statusEl = document.getElementById("status");
+
+  // Window creation order is not a guarantee, and a command that queries the
+  // overlay can land before it exists ("no window labelled 'overlay'"). Retry
+  // briefly rather than leaving the panel stuck on a startup race.
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  async function call(cmd, args, tries = 10) {
+    let last;
+    for (let i = 0; i < tries; i++) {
+      try {
+        return await invoke(cmd, args);
+      } catch (e) {
+        last = e;
+        if (!String(e).includes("no window labelled")) throw e;
+        await sleep(150);
+      }
+    }
+    throw last;
+  }
   const say = (m, bad) => {
     statusEl.textContent = m;
     statusEl.className = bad ? "warn" : "";
@@ -168,7 +203,71 @@
 
   document.getElementById("quit").addEventListener("click", () => invoke("quit"));
 
-  invoke("diagnostics").then((d) => {
+  // ── Geometry ────────────────────────────────────────────────────────────────
+  const edgeName = { gap_left: "left", gap_top: "top", gap_right: "right", gap_bottom: "bottom" };
+
+  function renderGeometry(g) {
+    const verdict = document.getElementById("geoVerdict");
+    const body = document.getElementById("geoBody");
+
+    verdict.className = "pill " + (g.ok ? "ok" : "bad");
+    verdict.textContent = g.ok ? "aligned" : "MISALIGNED";
+
+    const bad = Object.keys(edgeName).filter((k) => g[k] !== 0);
+    const chrome = (g.chrome_dx || g.chrome_dy)
+      ? `${g.chrome_dx}px horizontal, ${g.chrome_dy}px vertical <em>(compensated)</em>`
+      : "none on this machine";
+
+    body.innerHTML = `
+      <dl style="margin-top:10px">
+        <dt>Monitor</dt><dd>${g.monitor[2]}×${g.monitor[3]} @ (${g.monitor[0]}, ${g.monitor[1]})</dd>
+        <dt>Overlay</dt><dd>${g.inner[2]}×${g.inner[3]} @ (${g.inner[0]}, ${g.inner[1]})</dd>
+        <dt>Chrome</dt><dd>${chrome}</dd>
+        <dt>Edge gaps</dt><dd>L ${g.gap_left} · T ${g.gap_top} · R ${g.gap_right} · B ${g.gap_bottom}</dd>
+      </dl>`;
+
+    if (g.ok) {
+      body.innerHTML += `<p class="hint">
+        The overlay covers the monitor exactly. The red frame should touch all four screen edges.
+        Safe to proceed with the call tests.</p>`;
+      say("");
+      return;
+    }
+
+    // A failure here invalidates the spike, so spell out the recovery path
+    // rather than leaving the tester to guess.
+    body.innerHTML += `<p class="hint warn">
+      <strong>The overlay does not line up with the monitor.</strong>
+      Off by ${bad.map((k) => `${g[k]}px on the ${edgeName[k]}`).join(", ")}.
+      Annotations would land in the wrong place, so fix this before testing:</p>
+      <ol class="hint" style="padding-left:19px">
+        <li>Press <strong>Re-fit overlay</strong>, then check again — a second pass measures chrome
+            against the already-shifted window and usually converges.</li>
+        <li>Still off? Set Windows display scaling to 100%, then re-fit. A non-integer scale factor
+            is the usual cause.</li>
+        <li>Still off? Note your Windows build, scale factor and the gap numbers above in
+            <code>docs/plans/01-share-visibility-spike.md</code> — a machine where compensation
+            fails is a Phase 1 finding worth having, not a dead end.</li>
+      </ol>`;
+    say("Geometry misaligned — see the remediation steps above.", true);
+  }
+
+  const runGeo = () =>
+    call("geometry_check").then(renderGeometry).catch((e) => say(String(e), true));
+
+  document.getElementById("geo").addEventListener("click", runGeo);
+  document.getElementById("refit").addEventListener("click", async () => {
+    try {
+      const [dx, dy] = await invoke("refit_overlay");
+      say(dx || dy ? `Re-fitted, compensating ${dx}×${dy}px of chrome.` : "Re-fitted; no chrome offset.");
+      await runGeo();
+    } catch (e) {
+      say(String(e), true);
+    }
+  });
+  runGeo();
+
+  call("diagnostics").then((d) => {
     const supported = d.exclusion_supported
       ? '<span class="pill ok">supported</span>'
       : '<span class="pill bad">UNSUPPORTED</span>';
