@@ -26,6 +26,7 @@
   button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
   button.danger { border-color: #5a2b2b; }
   .swatch { width: 30px; height: 30px; border-radius: 6px; border: 2px solid var(--line); padding: 0; }
+  .swatch.on { border-color: #e8eaed; box-shadow: 0 0 0 2px #14161a, 0 0 0 4px #e8eaed; }
   .hint { color: var(--muted); font-size: 12px; margin-top: 9px; line-height: 1.5; }
   code { background: #111316; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
   dl { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; margin: 0; font-size: 12.5px; }
@@ -130,13 +131,16 @@
   <div class="card">
     <h2>Colour</h2>
     <div class="row">
-      <button class="swatch" style="background:#FF2D2D" data-c="#FF2D2D"></button>
-      <button class="swatch" style="background:#FFB020" data-c="#FFB020"></button>
-      <button class="swatch" style="background:#37D67A" data-c="#37D67A"></button>
-      <button class="swatch" style="background:#2D9CFF" data-c="#2D9CFF"></button>
-      <button class="swatch" style="background:#C45BFF" data-c="#C45BFF"></button>
-      <button class="swatch" style="background:#FFFFFF" data-c="#FFFFFF"></button>
+      <button class="swatch on" style="background:#FFC20E" data-c="#FFC20E" title="Bumblebee (1)"></button>
+      <button class="swatch" style="background:#FF2D2D" data-c="#FF2D2D" title="Red (2)"></button>
+      <button class="swatch" style="background:#4FC3F7" data-c="#4FC3F7" title="Light blue (3)"></button>
+      <button class="swatch" style="background:#FFFFFF" data-c="#FFFFFF" title="White (4)"></button>
+      <button class="swatch" style="background:#000000" data-c="#000000" title="Black (5)"></button>
     </div>
+    <p class="hint">
+      Press <code>1</code>&ndash;<code>5</code> while drawing. Bumblebee is the default &mdash; it
+      reads over dark editors and white documents alike. Marks keep the colour they were drawn in.
+    </p>
   </div>
 
   <div class="card">
@@ -326,6 +330,12 @@
     b.addEventListener("click", () =>
       invoke("set_overlay_color", { color: b.dataset.c }).catch((e) => say(String(e), true))
     );
+  });
+
+  // Number keys change colour too, so the lit swatch follows backend state.
+  window.__TAURI__.event.listen("color-changed", (e) => {
+    document.querySelectorAll(".swatch").forEach((b) =>
+      b.classList.toggle("on", b.dataset.c.toLowerCase() === String(e.payload).toLowerCase()));
   });
 
   document.getElementById("quit").addEventListener("click", () => invoke("quit"));

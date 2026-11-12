@@ -570,7 +570,11 @@ fn set_overlay_visible(app: tauri::AppHandle, visible: bool) -> Result<(), Strin
 /// confirm over voice that what the viewer sees is live and not a stale frame.
 #[tauri::command]
 fn set_overlay_color(app: tauri::AppHandle, color: String) -> Result<(), String> {
-    app.emit_to("overlay", "set-color", color)
+    app.emit_to("overlay", "set-color", color.clone())
+        .map_err(|e| e.to_string())?;
+    // Colour can also change from the number keys, so the panel follows state
+    // rather than its own last click.
+    app.emit_to("control", "color-changed", color)
         .map_err(|e| e.to_string())
 }
 
@@ -771,6 +775,11 @@ fn main() {
                 ("O", "oval tool"),
                 ("P", "pen (freehand)"),
                 ("T", "text box"),
+                ("1", "bumblebee yellow (default)"),
+                ("2", "red"),
+                ("3", "light blue"),
+                ("4", "white"),
+                ("5", "black"),
                 ("Esc", "finish text, then exit to pass-through"),
                 ("Ctrl+Z", "remove newest mark"),
                 ("Backspace", "remove newest mark"),
