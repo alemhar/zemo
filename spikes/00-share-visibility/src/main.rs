@@ -22,6 +22,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, PhysicalPosition, PhysicalSize};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
@@ -792,6 +794,82 @@ fn main() {
             let _ = set_capture_excluded(&overlay, false);
 
             overlay.show()?;
+
+            // The tray is the app's only durable "I'm running" sign: the overlay
+            // is skipTaskbar and the control panel is easy to lose behind other
+            // windows. It also gives a way to quit that doesn't depend on
+            // remembering Ctrl+Alt+Shift+Q, or on that combo registering at all.
+            let panel = MenuItem::with_id(app, "panel", "Control panel", true, None::<&str>)?;
+            let keys = MenuItem::with_id(app, "keys", "Shortcuts	 Ctrl+Alt+/", true, None::<&str>)?;
+            let draw = MenuItem::with_id(app, "draw", "Toggle draw	 Ctrl+Alt+Z", true, None::<&str>)?;
+            let shot = MenuItem::with_id(app, "shot", "Screenshot	 Ctrl+Alt+G", true, None::<&str>)?;
+            let sep = PredefinedMenuItem::separator(app)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit Zemo	 Ctrl+Alt+Shift+Q", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&panel, &keys, &draw, &shot, &sep, &quit])?;
+
+            let show_panel = |app: &tauri::AppHandle| {
+                if let Some(w) = app.get_webview_window("control") {
+                    let _ = w.show();
+                    let _ = w.unminimize();
+                    let _ = w.set_focus();
+                }
+            };
+
+            TrayIconBuilder::new()
+                .icon(app.default_window_icon().unwrap().clone())
+                .tooltip("Zemo — screen annotation")
+                .menu(&menu)
+                // Menu on right-click only, so left-click can do the thing
+                // people expect from a tray icon: bring the window back.
+                .show_menu_on_left_click(false)
+                .on_menu_event(move |app, event| {
+                    let r = match event.id().as_ref() {
+                        "panel" => {
+                            show_panel(app);
+                            Ok(())
+                        }
+                        "keys" => toggle_help(app.clone()),
+                        "draw" => toggle_mode(app.clone()),
+                        "shot" => capture_and_save(app.clone()).map(|_| ()),
+                        "quit" => {
+                            app.exit(0);
+                            Ok(())
+                        }
+                        _ => Ok(()),
+                    };
+                    if let Err(e) = r {
+                        eprintln!("[spike] tray action failed: {e}");
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let tauri::tray::TrayIconEvent::Click {
+                        button: tauri::tray::MouseButton::Left,
+                        button_state: tauri::tray::MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        if let Some(w) = tray.app_handle().get_webview_window("control") {
+                            let _ = w.show();
+                            let _ = w.unminimize();
+                            let _ = w.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
+            eprintln!("[spike] tray icon ready");
+
+            // With no taskbar entry, the tray is the only way back to the
+            // panel — so X must hide it, not destroy it. Closing for real
+            // would leave the tray pointing at a window that no longer exists.
+            if let Some(control) = app.get_webview_window("control") {
+                let handle = control.clone();
+                control.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = handle.hide();
+                    }
+                });
+            }
 
             // Rebuilt rather than captured: the handler closure above already owns
             // the originals, and Shortcut is cheap to construct.

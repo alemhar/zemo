@@ -35,7 +35,8 @@
         "height": 740,
         "resizable": true,
         "alwaysOnTop": true,
-        "center": true
+        "center": true,
+        "skipTaskbar": true
       },
       {
         "label": "help",
