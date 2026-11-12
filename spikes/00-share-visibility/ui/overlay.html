@@ -97,39 +97,37 @@
 
   #draw { position: fixed; inset: 0; width: 100%; height: 100%; }
 
-  /* Capture confirmation: a pulse around the screen EDGE rather than a
-     whole-screen blink. Impossible to miss from anywhere on the display, but
-     it never washes out what the presenter is talking about — a white strobe
-     across a live call would be hostile to everyone watching. */
-  #shutter {
-    position: fixed; inset: 0;
-    border: 14px solid #37d67a;
-    box-sizing: border-box;
-    box-shadow: inset 0 0 40px rgba(55,214,122,.55);
-    opacity: 0; pointer-events: none;
-  }
-  #shutter.fire { animation: shutter .55s ease-out; }
-  @keyframes shutter {
-    0%   { opacity: 0 }
-    18%  { opacity: 1 }
-    100% { opacity: 0 }
-  }
+  /* Capture confirmation.
+     An edge pulse was tried and dropped: the test-graphics frame already
+     breathes on a 2s loop, so another pulsing border read as more of the same.
+     A card that punches in and settles is a different KIND of motion, which is
+     what makes it register as an event rather than ambience. */
+  #shutter { display: none; }
 
   /* Toast sits top-centre, clear of the centred test graphics that were
      swallowing it before. */
   #flash {
-    position: fixed; top: 46px; left: 50%;
-    transform: translate(-50%, -14px);
-    background: rgba(12,14,17,.92); color: #fff;
-    padding: 13px 22px; border-radius: 11px;
-    font-size: 16px; font-weight: 600; text-align: center;
-    border: 2px solid #37d67a;
-    box-shadow: 0 10px 34px rgba(0,0,0,.55);
+    position: fixed; top: 60px; left: 50%;
+    background: #0d1014; color: #fff;
+    padding: 20px 34px; border-radius: 16px;
+    font-size: 24px; font-weight: 800; text-align: center;
+    border: 3px solid #fff;
+    box-shadow: 0 0 0 6px rgba(255,255,255,.20), 0 22px 60px rgba(0,0,0,.7);
     opacity: 0; pointer-events: none;
-    transition: opacity .16s ease, transform .16s ease;
+    transform: translate(-50%, 0) scale(.6);
   }
-  #flash.show { opacity: 1; transform: translate(-50%, 0); }
-  #flash small { display: block; font-weight: 400; font-size: 12.5px; opacity: .72; margin-top: 4px; }
+  #flash.show { animation: punch 2.4s cubic-bezier(.2,1.2,.3,1) forwards; }
+  @keyframes punch {
+    0%   { opacity: 0; transform: translate(-50%, 0) scale(.6) }
+    12%  { opacity: 1; transform: translate(-50%, 0) scale(1.06) }
+    20%  { opacity: 1; transform: translate(-50%, 0) scale(1) }
+    80%  { opacity: 1; transform: translate(-50%, 0) scale(1) }
+    100% { opacity: 0; transform: translate(-50%, 0) scale(1) }
+  }
+  #flash small {
+    display: block; font-weight: 400; font-size: 14px;
+    opacity: .75; margin-top: 7px; letter-spacing: .2px;
+  }
 
   /* Status chip. Sits bottom-centre so it reads as a caption rather than
      competing with whatever is being annotated. */
@@ -192,9 +190,12 @@
 
 <script>
   const { event, core } = window.__TAURI__ ?? {};
-  window.addEventListener("error", (e) => {
-    core?.invoke("log_js", { msg: `JS ERROR: ${e.message} @${e.lineno}` }).catch(() => {});
-  });
+  const jlog = (m) => core?.invoke("log_js", { msg: m }).catch(() => {});
+  window.addEventListener("error", (e) => jlog(`JS ERROR: ${e.message} @${e.lineno}`));
+  // A throw inside an event callback surfaces as a rejected promise, not a
+  // window error — without this it fails completely silently.
+  window.addEventListener("unhandledrejection", (e) =>
+    jlog(`JS REJECTION: ${e.reason}`));
   const invoke = core?.invoke;
   const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -234,15 +235,11 @@
     return 0.2126 * r + 0.7152 * g + 0.0722 * b;
   }
 
-  /**
-   * The halo keeps a mark legible over arbitrary UI (PRD R6.3) — but only a
-   * DARK halo is ever subtle enough. A light halo around a dark mark reads as
-   * a thick white outline that's heavier than the mark itself.
-   *
-   * So dark colours get no halo at all. Black is for light backgrounds, where
-   * it's already legible and a halo buys nothing. Returns null for "no halo".
-   */
-  const haloFor = (hex) => (luminance(hex) > 0.25 ? "rgba(0,0,0,.45)" : null);
+  // Marks are drawn with no halo at all. The PRD called for one (R6.3) to keep
+  // colours legible over arbitrary UI, but in practice it looked worse than the
+  // problem it solved: the halo is a wider copy of the same shape, so an
+  // arrow's halo head sits further back than the real head and pokes out the
+  // side. The palette is high-contrast enough to carry itself.
 
   // ── Clock ──────────────────────────────────────────────────────────────────
   const clock = document.getElementById("clock");
@@ -268,14 +265,9 @@
   // (PRD R6.3). Drawn as a wider shape of the same geometry, underneath.
   function haloed(make) {
     const g = el("g", {});
-    const colour = accent();
-    const haloColour = haloFor(colour);
-    // parts[] drives update(); a haloless mark simply has one part.
-    const parts = [];
-    if (haloColour) parts.push(make(haloColour, stroke + 3));
-    parts.push(make(colour, stroke));
-    g.append(...parts);
-    return { node: g, parts };
+    const main = make(accent(), stroke);
+    g.append(main);
+    return { node: g, parts: [main] };
   }
 
   function makeRect() {
@@ -583,19 +575,18 @@
 
     // Shown AFTER the shot is taken, so the confirmation can't appear in it.
     event.listen("flash", (e) => {
-      const [path, clipped] = e.payload;
-
-      const sh = document.getElementById("shutter");
-      sh.classList.remove("fire");
-      void sh.offsetWidth;          // restart the animation on rapid repeats
-      sh.classList.add("fire");
+      jlog(`flash received: ${JSON.stringify(e.payload)}`);
+      const [path, clipped] = Array.isArray(e.payload)
+        ? e.payload
+        : [String(e.payload ?? ""), false];
 
       const el = document.getElementById("flash");
       el.innerHTML =
-        `📸 Saved${clipped ? " + copied to clipboard" : ""}<small>${path}</small>`;
+        `📸 Screenshot saved${clipped ? " + copied" : ""}<small>${path}</small>`;
+      // Restart the animation cleanly when captures come in quick succession.
+      el.classList.remove("show");
+      void el.offsetWidth;
       el.classList.add("show");
-      clearTimeout(el._t);
-      el._t = setTimeout(() => el.classList.remove("show"), 2600);
     });
 
     event.listen("spotlight", (e) => spot.classList.toggle("on", !!e.payload));

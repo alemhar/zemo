@@ -281,8 +281,15 @@ fn capture_and_save(app: tauri::AppHandle) -> Result<String, String> {
 
         let shown = path.display().to_string();
         eprintln!("[spike] saved {shown} (clipboard: {clip})");
-        let _ = app.emit_to("overlay", "flash", (shown.clone(), clip));
-        let _ = app.emit_to("control", "captured", (shown.clone(), clip));
+        // Global emit, not emit_to: the targeted form silently failed to reach
+        // the overlay here, and the result was being discarded so nothing said
+        // so. Both windows filter by event name anyway.
+        if let Err(e) = app.emit("flash", (shown.clone(), clip)) {
+            eprintln!("[spike] flash emit failed: {e}");
+        }
+        if let Err(e) = app.emit("captured", (shown.clone(), clip)) {
+            eprintln!("[spike] captured emit failed: {e}");
+        }
         Ok(shown)
     }
 }
