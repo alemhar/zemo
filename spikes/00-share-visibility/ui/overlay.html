@@ -67,6 +67,29 @@
 
   .sample { position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%); }
 
+  /* ── Text box ────────────────────────────────────────────────────────────── */
+  /* Lives inside an SVG <foreignObject>: SVG text has no wrapping, but an HTML
+     div wraps for free and is editable. Styles apply normally because the div
+     is real HTML in this document. */
+  .textbox {
+    width: 100%; height: 100%;
+    box-sizing: border-box;
+    padding: 8px 11px;
+    color: #fff;
+    font: 600 22px/1.35 "Segoe UI", system-ui, sans-serif;
+    background: rgba(0,0,0,.62);
+    border: 3px solid var(--accent);
+    border-radius: 6px;
+    outline: none;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    overflow: hidden;
+  }
+  .textbox:empty::before {
+    content: "type…";
+    opacity: .45;
+  }
+
   /* ── Spotlight ───────────────────────────────────────────────────────────── */
   /* Sits under #draw so annotations stay bright on top of the dim (PRD R6.10). */
   #spot { position: fixed; inset: 0; width: 100%; height: 100%; display: none; }
@@ -147,7 +170,12 @@
 
   // Single-letter tool keys (PRD §6.3). Safe unmodified because the overlay only
   // holds focus while armed, so these can never leak into the app underneath.
-  const TOOL_KEYS = { a: "arrow", r: "rect", o: "ellipse", p: "pen" };
+  const TOOL_KEYS = { a: "arrow", r: "rect", o: "ellipse", p: "pen", t: "text" };
+
+  // True while a text box has the caret. Every keyboard shortcut is suppressed
+  // during that time — otherwise typing "a rectangle" would switch tools four
+  // times and delete a mark.
+  let editing = false;
   let accent = () =>
     getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#FF2D2D";
 
@@ -258,7 +286,51 @@
     return s;
   }
 
-  const BUILDERS = { rect: makeRect, ellipse: makeEllipse, arrow: makeArrow, pen: makePen };
+  const XHTML_NS = "http://www.w3.org/1999/xhtml";
+
+  /**
+   * Text box. Drag out the container; whatever you type wraps inside it.
+   * The box grows downward if the text outruns the height you dragged, so a
+   * misjudged drag doesn't silently clip what you wrote.
+   */
+  function makeText() {
+    const fo = el("foreignObject", {});
+    const div = document.createElementNS(XHTML_NS, "div");
+    div.setAttribute("contenteditable", "true");
+    div.setAttribute("class", "textbox");
+    fo.appendChild(div);
+
+    const s = { node: fo, div, isText: true };
+    s.update = (a, b) => {
+      fo.setAttribute("x", Math.min(a.x, b.x));
+      fo.setAttribute("y", Math.min(a.y, b.y));
+      fo.setAttribute("width", Math.max(Math.abs(b.x - a.x), 120));
+      fo.setAttribute("height", Math.max(Math.abs(b.y - a.y), 46));
+    };
+
+    div.addEventListener("focus", () => { editing = true; });
+    div.addEventListener("blur", () => {
+      editing = false;
+      // An empty box is almost always an accidental click; drop it rather than
+      // leaving an empty frame on screen.
+      if (!div.textContent.trim()) {
+        const i = shapes.indexOf(s);
+        if (i >= 0) { shapes.splice(i, 1); syncCount(); }
+        fo.remove();
+      }
+    });
+    // foreignObject clips its content, so grow to fit instead of hiding text.
+    div.addEventListener("input", () => {
+      const needed = div.scrollHeight;
+      if (needed > +fo.getAttribute("height")) fo.setAttribute("height", needed);
+    });
+
+    return s;
+  }
+
+  const BUILDERS = {
+    rect: makeRect, ellipse: makeEllipse, arrow: makeArrow, pen: makePen, text: makeText,
+  };
 
   // ── Shape list ─────────────────────────────────────────────────────────────
   // Kept in draw order so marks can be retired from either end: newest-first
@@ -294,6 +366,9 @@
   window.addEventListener("pointerdown", (e) => {
     if (tool === "none" || !BUILDERS[tool]) return;
     if (e.button !== 0) return;
+    // Clicking an existing text box should put the caret in it, not start a
+    // new shape on top of it.
+    if (e.target.closest?.(".textbox")) return;
     start = pos(e);
     active = BUILDERS[tool]();
     active.update(start, start);
@@ -308,6 +383,24 @@
 
   window.addEventListener("pointerup", () => {
     if (!active) return;
+
+    if (active.isText) {
+      // A tap with no real drag means "put a box here" — give it a usable
+      // default rather than a 120px sliver.
+      if (+active.node.getAttribute("width") <= 120) {
+        active.node.setAttribute("width", 340);
+        active.node.setAttribute("height", 96);
+      }
+      shapes.push(active);
+      syncCount();
+      const d = active.div;
+      // Focus after the current event settles, or the pointerup steals it back.
+      setTimeout(() => d.focus(), 0);
+      active = null;
+      start = null;
+      return;
+    }
+
     // A click with no drag leaves a degenerate shape; drop it.
     const b = active.node.getBBox();
     if (b.width < 3 && b.height < 3) {
@@ -327,6 +420,15 @@
   });
 
   window.addEventListener("keydown", (e) => {
+    // While typing, the overlay's shortcuts must stay out of the way entirely.
+    if (editing) {
+      if (e.key === "Escape") {
+        document.activeElement?.blur();
+        e.preventDefault();
+      }
+      return;
+    }
+
     if (e.key === "Escape") {
       if (active) { active.node.remove(); active = null; start = null; return; }
       invoke?.("set_tool", { tool: "none" });   // hand control back to the desktop
