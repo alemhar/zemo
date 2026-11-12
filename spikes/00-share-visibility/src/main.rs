@@ -243,6 +243,65 @@ fn refit_overlay(app: tauri::AppHandle) -> Result<(i32, i32), String> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Shortcut registry + help
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The cheat sheet is generated from what actually registered, not from a
+// hand-kept list. A binding another app already owns shows up as unavailable
+// instead of being advertised and then silently doing nothing — which is
+// exactly how Ctrl+Alt+C wasted time earlier.
+
+#[derive(Clone, serde::Serialize)]
+struct Binding {
+    keys: String,
+    desc: String,
+    /// "global" works anywhere; "drawing" only while the overlay is armed.
+    scope: String,
+    ok: bool,
+}
+
+static BINDINGS: Mutex<Vec<Binding>> = Mutex::new(Vec::new());
+
+fn record(keys: &str, desc: &str, scope: &str, ok: bool) {
+    if let Ok(mut v) = BINDINGS.lock() {
+        v.push(Binding {
+            keys: keys.into(),
+            desc: desc.into(),
+            scope: scope.into(),
+            ok,
+        });
+    }
+}
+
+#[tauri::command]
+fn shortcut_list() -> Vec<Binding> {
+    BINDINGS.lock().map(|v| v.clone()).unwrap_or_default()
+}
+
+/// Toggle the cheat sheet. It lives in its own capture-excluded window so a
+/// presenter can consult it without the whole call reading it over their
+/// shoulder.
+#[tauri::command]
+fn toggle_help(app: tauri::AppHandle) -> Result<(), String> {
+    let showing = window_or_err(&app, "help")?.is_visible().unwrap_or(false);
+    set_help(app, !showing)
+}
+
+/// Explicit show/hide, so the panel button and the hotkey drive one path.
+#[tauri::command]
+fn set_help(app: tauri::AppHandle, show: bool) -> Result<(), String> {
+    let help = window_or_err(&app, "help")?;
+    if show {
+        help.show().map_err(|e| e.to_string())?;
+        help.set_focus().map_err(|e| e.to_string())?;
+    } else {
+        help.hide().map_err(|e| e.to_string())?;
+    }
+    app.emit_to("control", "help-changed", show)
+        .map_err(|e| e.to_string())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Spotlight
 // ─────────────────────────────────────────────────────────────────────────────
 //
@@ -596,6 +655,9 @@ fn main() {
                         }
                         Code::KeyA => clear_shapes(app.clone()),
                         Code::KeyS => toggle_spotlight(app.clone()),
+                        // Registered with and without Shift so both Ctrl+Alt+/
+                        // and Ctrl+Alt+? reach here.
+                        Code::Slash => toggle_help(app.clone()),
                         Code::BracketLeft => spotlight_size(app.clone(), -1),
                         Code::BracketRight => spotlight_size(app.clone(), 1),
                         Code::Backspace => remove_shape(app.clone(), "newest".into()),
@@ -626,6 +688,9 @@ fn main() {
             remove_shape,
             report_count,
             log_js,
+            shortcut_list,
+            toggle_help,
+            set_help,
             set_stroke,
             set_test_graphics,
             set_spotlight,
@@ -671,39 +736,58 @@ fn main() {
             // Rebuilt rather than captured: the handler closure above already owns
             // the originals, and Shortcut is cheap to construct.
             let ctrl_alt = Some(Modifiers::CONTROL | Modifiers::ALT);
-            for (sc, name) in [
-                (Shortcut::new(ctrl_alt, Code::KeyZ), "Ctrl+Alt+Z      toggle draw"),
-                (Shortcut::new(ctrl_alt, Code::KeyA), "Ctrl+Alt+A      clear all"),
-                (Shortcut::new(ctrl_alt, Code::KeyS), "Ctrl+Alt+S      spotlight"),
-                (Shortcut::new(ctrl_alt, Code::BracketLeft), "Ctrl+Alt+[      smaller spot"),
-                (Shortcut::new(ctrl_alt, Code::BracketRight), "Ctrl+Alt+]      bigger spot"),
-                (Shortcut::new(ctrl_alt, Code::Backspace), "Ctrl+Alt+Bksp   remove newest"),
-                (Shortcut::new(ctrl_alt, Code::Home), "Ctrl+Alt+Home   remove oldest"),
-                (
-                    Shortcut::new(
-                        Some(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT),
-                        Code::KeyR,
-                    ),
-                    "Ctrl+Alt+Shift+R  reset",
-                ),
-                (
-                    Shortcut::new(
-                        Some(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT),
-                        Code::KeyQ,
-                    ),
-                    "Ctrl+Alt+Shift+Q  quit",
-                ),
+            let ctrl_alt_shift = Some(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT);
+            for (sc, keys, desc) in [
+                (Shortcut::new(ctrl_alt, Code::KeyZ), "Ctrl+Alt+Z", "draw / pass-through"),
+                (Shortcut::new(ctrl_alt, Code::Slash), "Ctrl+Alt+/", "show these shortcuts"),
+                (Shortcut::new(ctrl_alt_shift, Code::Slash), "Ctrl+Alt+?", "show these shortcuts"),
+                (Shortcut::new(ctrl_alt, Code::KeyS), "Ctrl+Alt+S", "spotlight on / off"),
+                (Shortcut::new(ctrl_alt, Code::BracketLeft), "Ctrl+Alt+[", "spotlight smaller"),
+                (Shortcut::new(ctrl_alt, Code::BracketRight), "Ctrl+Alt+]", "spotlight bigger"),
+                (Shortcut::new(ctrl_alt, Code::Backspace), "Ctrl+Alt+Backspace", "remove newest mark"),
+                (Shortcut::new(ctrl_alt, Code::Home), "Ctrl+Alt+Home", "remove oldest mark"),
+                (Shortcut::new(ctrl_alt, Code::KeyA), "Ctrl+Alt+A", "clear all marks"),
+                (Shortcut::new(ctrl_alt_shift, Code::KeyR), "Ctrl+Alt+Shift+R", "reset everything"),
+                (Shortcut::new(ctrl_alt_shift, Code::KeyQ), "Ctrl+Alt+Shift+Q", "quit"),
             ] {
-                // A failure here means another app owns the combo — surfaced rather
-                // than swallowed, since the loop is unusable without the hotkey.
-                match app.global_shortcut().register(sc) {
-                    Ok(()) => eprintln!("[spike] registered  {name}"),
-                    Err(e) => eprintln!("[spike] UNAVAILABLE  {name}  ({e})"),
-                }
+                // A failure means another app owns the combo. Recorded rather
+                // than swallowed, so the cheat sheet can say so.
+                let ok = match app.global_shortcut().register(sc) {
+                    Ok(()) => true,
+                    Err(e) => {
+                        eprintln!("[spike] UNAVAILABLE {keys}  ({e})");
+                        false
+                    }
+                };
+                record(keys, desc, "global", ok);
+            }
+
+            // Overlay-local keys. Not registered globally — they only reach the
+            // overlay while it is armed and holding focus — but a user doesn't
+            // care about that distinction when trying to remember a key.
+            for (keys, desc) in [
+                ("A", "arrow tool"),
+                ("R", "rectangle tool"),
+                ("O", "oval tool"),
+                ("P", "pen (freehand)"),
+                ("T", "text box"),
+                ("Esc", "finish text, then exit to pass-through"),
+                ("Ctrl+Z", "remove newest mark"),
+                ("Backspace", "remove newest mark"),
+                ("Home", "remove oldest mark"),
+                ("Right-click", "cancel the shape being drawn"),
+            ] {
+                record(keys, desc, "drawing", true);
             }
 
             // The control panel IS capture-excluded (PRD R4.2) — viewers should
             // never see the presenter's controls.
+            if let Some(help) = app.get_webview_window("help") {
+                if let Err(e) = set_capture_excluded(&help, true) {
+                    eprintln!("[spike] help window exclusion FAILED: {e}");
+                }
+            }
+
             if let Some(control) = app.get_webview_window("control") {
                 // Escape hatch: exclusion also blocks ordinary screenshot tools, so
                 // there is no way to capture the panel for a bug report. Setting

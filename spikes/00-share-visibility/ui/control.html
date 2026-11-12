@@ -53,6 +53,11 @@
       <span id="modePill" class="pill ok">pass-through</span>
       <span class="hint" style="margin:0">press <code>Ctrl+Alt+Z</code> anywhere to toggle</span>
     </div>
+    <div class="row" style="margin-top:11px">
+      <button id="help">Show shortcuts</button>
+      <span class="hint" style="margin:0">or <code>Ctrl+Alt+/</code> &mdash; hidden by default,
+        and never visible to the call</span>
+    </div>
     <dl style="margin-top:12px">
       <dt><code>Ctrl+Alt+Z</code></dt><dd>draw &#8644; pass-through</dd>
       <dt><code>Esc</code></dt><dd>back to pass-through (keeps marks)</dd>
@@ -236,6 +241,21 @@
     "Excluded from capture", "VISIBLE to capture",
     (on) => invoke("set_exclusion", { target: "control", excluded: on })
   );
+
+  // ── Shortcut cheat sheet ────────────────────────────────────────────────────
+  toggle(
+    document.getElementById("help"),
+    "Hide shortcuts", "Show shortcuts",
+    (on) => invoke("set_help", { show: on })
+  );
+
+  // The hotkey, Esc and a click inside the sheet all close it, so the button
+  // follows the window's real state rather than its own last click.
+  window.__TAURI__.event.listen("help-changed", (e) => {
+    const b = document.getElementById("help");
+    b.classList.toggle("on", !!e.payload);
+    b.textContent = e.payload ? "Hide shortcuts" : "Show shortcuts";
+  });
 
   // ── Mode + tools ────────────────────────────────────────────────────────────
   const modePill = document.getElementById("modePill");

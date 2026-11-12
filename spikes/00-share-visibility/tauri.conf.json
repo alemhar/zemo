@@ -36,6 +36,22 @@
         "resizable": true,
         "alwaysOnTop": true,
         "center": true
+      },
+      {
+        "label": "help",
+        "url": "help.html",
+        "title": "Zemo shortcuts",
+        "width": 560,
+        "height": 640,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "focus": false,
+        "visible": false,
+        "center": true
       }
     ]
   },
