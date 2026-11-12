@@ -388,8 +388,11 @@ Five hard Windows problems are already solved in the Klipp codebase and port dir
 
 ### Assumptions
 
-- **A1** — Windows 10/11 x64 only for v1. macOS is a v2 project with a completely different
-  overlay implementation (`NSWindow` + `CGWindowLevel`) and a screen-recording permission flow.
+- **A1** — Windows 10/11 x64 only, and **demand-gated** rather than scheduled. macOS is a
+  separate project: the UI layer ports unchanged, but the platform layer is ~1 week of AppKit work
+  (`NSWindow` levels, Spaces/fullscreen `collectionBehavior`, ScreenCaptureKit, the Screen
+  Recording permission flow, signing + notarization), and Phase 0 would have to be re-run against
+  ScreenCaptureKit from scratch. The repo is public; a macOS issue is the trigger to reconsider.
 - **A2** — **Primary monitor only** for v1. Multi-monitor spawns one overlay per display and is a
   v2 plan doc. *Documented limitation: if you share a non-primary display, annotations won't appear
   there.* First-run onboarding must say so.

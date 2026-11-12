@@ -80,12 +80,23 @@ COM interface, and a click-through toggle that preserves `WS_EX_LAYERED`) are al
 ## Scope
 
 Zemo draws pixels on a transparent window. That's the whole product. Explicitly **not** included:
-screen recording, screenshots, FFmpeg, webcam overlay, OCR, cloud sync, accounts, or telemetry.
+screen recording, FFmpeg, webcam overlay, OCR, cloud sync, accounts, or telemetry.
+
+**Windows 10/11 only.** A macOS port is perfectly feasible — all the UI code is portable, and the
+platform layer is roughly a week's work (`NSWindow` levels, ScreenCaptureKit, the Screen Recording
+permission flow, notarization). It isn't planned, because proving the concept properly on one
+platform beats half-proving it on two. **If you want macOS, open an issue** — that's the signal
+that would move it.
 
 ## Contributing
 
-Pre-alpha, so the most useful contribution right now is feedback on
-[the PRD](docs/PRD.md) — open an issue.
+Pre-alpha. The two most useful things right now:
+
+1. **Tell us whether it works on your calls.** Grab the
+   [latest release](https://github.com/alemhar/zemo/releases/latest), share your whole screen on
+   Teams, Zoom or Meet, draw an arrow, and report whether the other person could see it. That is
+   the one question the project still cannot answer on its own.
+2. **Feedback on [the PRD](docs/PRD.md)** — it is the product definition, open to argument.
 
 ## License
 
