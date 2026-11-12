@@ -291,15 +291,23 @@ fn set_hook_installed(app: &tauri::AppHandle, install: bool) -> Result<(), Strin
     let mut guard = MOUSE_HOOK.lock().map_err(|e| e.to_string())?;
     match (install, guard.take()) {
         (true, None) => {
-            // WH_MOUSE_LL requires the installing thread to pump messages, which
-            // is true of the main thread and not of a Tauri command's thread.
-            let (tx, rx) = std::sync::mpsc::channel();
+            // WH_MOUSE_LL requires the installing thread to pump messages, so it
+            // has to go on the main thread. Deliberately NOT waiting for the
+            // result: this can be called from the shortcut handler, and if that
+            // handler runs on the main thread, blocking here deadlocks the app.
+            drop(guard);
             app.run_on_main_thread(move || {
-                let r = unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), None, 0) };
-                let _ = tx.send(r.map(|h| h.0 as isize).map_err(|e| e.to_string()));
+                match unsafe { SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_proc), None, 0) } {
+                    Ok(h) => {
+                        if let Ok(mut g) = MOUSE_HOOK.lock() {
+                            *g = Some(h.0 as isize);
+                        }
+                        eprintln!("[spike] mouse hook installed");
+                    }
+                    Err(e) => eprintln!("[spike] mouse hook FAILED: {e}"),
+                }
             })
             .map_err(|e| e.to_string())?;
-            *guard = Some(rx.recv().map_err(|e| e.to_string())??);
         }
         (false, Some(h)) => unsafe {
             let _ = UnhookWindowsHookEx(HHOOK(h as *mut _));
@@ -318,6 +326,7 @@ fn set_hook_installed(_app: &tauri::AppHandle, _install: bool) -> Result<(), Str
 
 #[tauri::command]
 fn set_spotlight(app: tauri::AppHandle, on: bool) -> Result<(), String> {
+    eprintln!("[spike] set_spotlight({on})");
     if on {
         // Cache the monitor origin once so the hook doesn't query it per move.
         if let Ok(Some(m)) = window_or_err(&app, "overlay")?.primary_monitor() {
@@ -570,6 +579,7 @@ fn main() {
                     // Every binding is Ctrl+Alt+<key>, so matching the key code is
                     // enough — and it avoids the handler owning Shortcut values that
                     // setup() would also need to borrow.
+                    eprintln!("[spike] hotkey: {:?} mods={:?}", shortcut.key, shortcut.mods);
                     let result = match shortcut.key {
                         Code::KeyZ => toggle_mode(app.clone()),
                         Code::KeyR if shortcut.mods.contains(Modifiers::SHIFT) => {
