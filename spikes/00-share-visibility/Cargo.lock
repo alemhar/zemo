@@ -5213,7 +5213,7 @@ dependencies = [
 
 [[package]]
 name = "zemo-spike-share-visibility"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "image",
  "serde",

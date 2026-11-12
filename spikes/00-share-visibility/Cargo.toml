@@ -1,6 +1,6 @@
 [package]
 name = "zemo-spike-share-visibility"
-version = "0.1.0"
+version = "0.1.1"
 description = "Phase 0 spike: does a transparent always-on-top overlay appear in a Teams/Zoom monitor share?"
 authors = ["Alemhar Salihuddin"]
 edition = "2021"
