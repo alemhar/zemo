@@ -80,6 +80,7 @@
     </div>
     <div class="row" style="margin-top:9px">
       <button id="spot">Spotlight</button>
+      <button id="hilite">Click ripples</button>
       <button id="shot">Screenshot</button>
       <button id="pass">Pass through now</button>
       <button id="gfx" class="on">Test graphics on</button>
@@ -239,6 +240,37 @@
     (on) => invoke("set_exclusion", { target: "control", excluded: on })
   );
 
+  // The tool and colour keys live in the overlay window, so they die the moment
+  // this panel takes focus. Handling them here too means they work wherever
+  // Zemo has focus, rather than only in the one window the user can't see.
+  const PANEL_TOOL_KEYS = { a: "arrow", r: "rect", o: "ellipse", p: "pen", t: "text" };
+  const PANEL_COLOURS = {
+    "1": "#FFC20E", "2": "#FF2D2D", "3": "#4FC3F7", "4": "#FFFFFF", "5": "#000000",
+  };
+
+  document.addEventListener("keydown", (e) => {
+    // Never swallow keys meant for a field, and leave modified combos to the
+    // global shortcuts.
+    if (e.target.closest("input, textarea, [contenteditable]")) return;
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+
+    const tool = PANEL_TOOL_KEYS[e.key.toLowerCase()];
+    if (tool) {
+      call("set_tool", { tool }).catch((err) => say(String(err), true));
+      return;
+    }
+    const colour = PANEL_COLOURS[e.key];
+    if (colour) invoke("set_overlay_color", { color: colour }).catch((err) => say(String(err), true));
+  });
+
+  // After any panel click, give focus back to the overlay so the next keypress
+  // lands where the drawing shortcuts live.
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("button")) {
+      setTimeout(() => invoke("focus_overlay").catch(() => {}), 0);
+    }
+  });
+
   // ── Shortcut cheat sheet ────────────────────────────────────────────────────
   toggle(
     document.getElementById("help"),
@@ -285,6 +317,17 @@
     const b = document.getElementById("spot");
     b.classList.toggle("on", !!e.payload);
     b.textContent = e.payload ? "Spotlight ON" : "Spotlight";
+  });
+
+  toggle(
+    document.getElementById("hilite"),
+    "Click ripples ON", "Click ripples",
+    (on) => invoke("set_highlight", { on })
+  );
+  window.__TAURI__.event.listen("highlight-changed", (e) => {
+    const b = document.getElementById("hilite");
+    b.classList.toggle("on", !!e.payload);
+    b.textContent = e.payload ? "Click ripples ON" : "Click ripples";
   });
 
   document.getElementById("shot").addEventListener("click", () =>

@@ -87,6 +87,23 @@
     opacity: .45;
   }
 
+  /* ── Click ripples (PRD R6.6) ────────────────────────────────────────────── */
+  /* Driven by a Win32 mouse hook, not pointer events: the overlay is
+     click-through while this is on, so it never sees the mouse itself.
+     A cursor halo (R6.5) was built and removed — any glow bright enough to
+     notice also washed out the text underneath it. Ripples cost nothing
+     visually because they are gone 0.6s after the click. */
+  .ripple {
+    position: fixed; border-radius: 50%;
+    border: 4px solid currentColor;
+    pointer-events: none;
+    animation: ripple .62s cubic-bezier(.2,.7,.3,1) forwards;
+  }
+  @keyframes ripple {
+    0%   { width: 12px; height: 12px; margin: -6px 0 0 -6px;   opacity: .95 }
+    100% { width: 112px; height: 112px; margin: -56px 0 0 -56px; opacity: 0 }
+  }
+
   /* ── Spotlight ───────────────────────────────────────────────────────────── */
   /* Sits under #draw so annotations stay bright on top of the dim (PRD R6.10). */
   #spot { position: fixed; inset: 0; width: 100%; height: 100%; display: none; }
@@ -536,6 +553,22 @@
     }
   });
 
+  // ── Click ripples ──────────────────────────────────────────────────────────
+  // Left and right get different colours so a viewer can tell which button was
+  // used — the point of ripples in a walkthrough (PRD R6.6).
+  const RIPPLE_COLOUR = { left: "#FFC20E", right: "#4FC3F7", middle: "#FFFFFF" };
+
+  function ripple(x, y, button) {
+    const r = document.createElement("div");
+    r.className = "ripple";
+    r.style.left = `${x}px`;
+    r.style.top = `${y}px`;
+    // `currentColor` in the border picks this up.
+    r.style.color = RIPPLE_COLOUR[button] ?? RIPPLE_COLOUR.left;
+    document.body.appendChild(r);
+    r.addEventListener("animationend", () => r.remove());
+  }
+
   // ── Spotlight ──────────────────────────────────────────────────────────────
   const spot = document.getElementById("spot");
   const hole = document.getElementById("hole");
@@ -617,7 +650,14 @@
     event.listen("cursor", (e) => {
       const [px, py] = e.payload;
       const dpr = window.devicePixelRatio || 1;
-      moveSpot(px / dpr, py / dpr);
+      const x = px / dpr, y = py / dpr;
+      moveSpot(x, y);
+    });
+
+    event.listen("click", (e) => {
+      const [px, py, button] = e.payload;
+      const dpr = window.devicePixelRatio || 1;
+      ripple(px / dpr, py / dpr, button);
     });
   }
 </script>

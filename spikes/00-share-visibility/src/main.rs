@@ -35,7 +35,8 @@ use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetWindowLongPtrW, SetWindowDisplayAffinity, SetWindowLongPtrW,
     SetWindowsHookExW, UnhookWindowsHookEx, GWL_EXSTYLE, HHOOK, MSLLHOOKSTRUCT, WDA_EXCLUDEFROMCAPTURE,
-    WDA_NONE, WH_MOUSE_LL, WM_MOUSEMOVE, WS_EX_LAYERED, WS_EX_TRANSPARENT,
+    WDA_NONE, WH_MOUSE_LL, WM_LBUTTONDOWN, WM_MBUTTONDOWN, WM_MOUSEMOVE, WM_RBUTTONDOWN,
+    WS_EX_LAYERED, WS_EX_TRANSPARENT,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -366,6 +367,9 @@ fn set_help(app: tauri::AppHandle, show: bool) -> Result<(), String> {
 // WH_MOUSE_LL approach Klipp uses for click ripples.
 
 static SPOT_ON: AtomicBool = AtomicBool::new(false);
+/// Cursor halo + click ripples (PRD R6.5-R6.7). Shares the mouse hook with the
+/// spotlight, since both need cursor position while the overlay is click-through.
+static HILITE_ON: AtomicBool = AtomicBool::new(false);
 static MOUSE_HOOK: Mutex<Option<isize>> = Mutex::new(None);
 static HOOK_APP: Mutex<Option<tauri::AppHandle>> = Mutex::new(None);
 /// Primary monitor origin, so hook coordinates can be made window-local.
@@ -373,8 +377,41 @@ static ORIGIN: Mutex<(i32, i32)> = Mutex::new((0, 0));
 static LAST_EMIT_MS: AtomicU64 = AtomicU64::new(0);
 static CLOCK: OnceLock<Instant> = OnceLock::new();
 
+/// True when anything still needs cursor events, so the hook can come down as
+/// soon as the last consumer is switched off.
+fn hook_wanted() -> bool {
+    SPOT_ON.load(Ordering::Relaxed) || HILITE_ON.load(Ordering::Relaxed)
+}
+
+/// Send an event to the overlay from inside the hook. try_lock, never lock:
+/// this runs on the input thread and blocking would stall the whole system.
+#[cfg(windows)]
+fn hook_emit<P: serde::Serialize + Clone>(name: &str, payload: P) {
+    if let Ok(app) = HOOK_APP.try_lock() {
+        if let Some(app) = app.as_ref() {
+            let _ = app.emit_to("overlay", name, payload);
+        }
+    }
+}
+
 #[cfg(windows)]
 unsafe extern "system" fn mouse_proc(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
+    if code >= 0 && HILITE_ON.load(Ordering::Relaxed) {
+        let button = match w.0 as u32 {
+            WM_LBUTTONDOWN => Some("left"),
+            WM_RBUTTONDOWN => Some("right"),
+            WM_MBUTTONDOWN => Some("middle"),
+            _ => None,
+        };
+        if let Some(button) = button {
+            // Clicks are rare enough to pass through unthrottled.
+            if let Ok(origin) = ORIGIN.try_lock() {
+                let info = unsafe { &*(l.0 as *const MSLLHOOKSTRUCT) };
+                hook_emit("click", (info.pt.x - origin.0, info.pt.y - origin.1, button));
+            }
+        }
+    }
+
     if code >= 0 && w.0 as u32 == WM_MOUSEMOVE && SPOT_ON.load(Ordering::Relaxed) {
         // Throttle to ~60fps. The hook fires on every raw mouse move, which is
         // far more often than the overlay can usefully repaint.
@@ -382,17 +419,9 @@ unsafe extern "system" fn mouse_proc(code: i32, w: WPARAM, l: LPARAM) -> LRESULT
         if now.saturating_sub(LAST_EMIT_MS.load(Ordering::Relaxed)) >= 16 {
             LAST_EMIT_MS.store(now, Ordering::Relaxed);
 
-            // try_lock, never lock: this runs on the input thread, and blocking
-            // here would stall mouse input system-wide.
-            if let (Ok(origin), Ok(app)) = (ORIGIN.try_lock(), HOOK_APP.try_lock()) {
-                if let Some(app) = app.as_ref() {
-                    let info = unsafe { &*(l.0 as *const MSLLHOOKSTRUCT) };
-                    let _ = app.emit_to(
-                        "overlay",
-                        "cursor",
-                        (info.pt.x - origin.0, info.pt.y - origin.1),
-                    );
-                }
+            if let Ok(origin) = ORIGIN.try_lock() {
+                let info = unsafe { &*(l.0 as *const MSLLHOOKSTRUCT) };
+                hook_emit("cursor", (info.pt.x - origin.0, info.pt.y - origin.1));
             }
         }
     }
@@ -437,23 +466,47 @@ fn set_hook_installed(_app: &tauri::AppHandle, _install: bool) -> Result<(), Str
     Ok(())
 }
 
+fn prepare_hook(app: &tauri::AppHandle) -> Result<(), String> {
+    // Cache the monitor origin once so the hook doesn't query it per move.
+    if let Ok(Some(m)) = window_or_err(app, "overlay")?.primary_monitor() {
+        *ORIGIN.lock().map_err(|e| e.to_string())? = (m.position().x, m.position().y);
+    }
+    *HOOK_APP.lock().map_err(|e| e.to_string())? = Some(app.clone());
+    Ok(())
+}
+
 #[tauri::command]
 fn set_spotlight(app: tauri::AppHandle, on: bool) -> Result<(), String> {
-    eprintln!("[spike] set_spotlight({on})");
     if on {
-        // Cache the monitor origin once so the hook doesn't query it per move.
-        if let Ok(Some(m)) = window_or_err(&app, "overlay")?.primary_monitor() {
-            *ORIGIN.lock().map_err(|e| e.to_string())? = (m.position().x, m.position().y);
-        }
-        *HOOK_APP.lock().map_err(|e| e.to_string())? = Some(app.clone());
+        prepare_hook(&app)?;
     }
     SPOT_ON.store(on, Ordering::Relaxed);
-    set_hook_installed(&app, on)?;
+    set_hook_installed(&app, hook_wanted())?;
 
     app.emit_to("overlay", "spotlight", on)
         .map_err(|e| e.to_string())?;
     app.emit_to("control", "spotlight-changed", on)
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_highlight(app: tauri::AppHandle, on: bool) -> Result<(), String> {
+    if on {
+        prepare_hook(&app)?;
+    }
+    HILITE_ON.store(on, Ordering::Relaxed);
+    set_hook_installed(&app, hook_wanted())?;
+
+    app.emit_to("overlay", "highlight", on)
+        .map_err(|e| e.to_string())?;
+    app.emit_to("control", "highlight-changed", on)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn toggle_highlight(app: tauri::AppHandle) -> Result<(), String> {
+    let on = HILITE_ON.load(Ordering::Relaxed);
+    set_highlight(app, !on)
 }
 
 #[tauri::command]
@@ -508,6 +561,22 @@ fn apply_mode(app: &tauri::AppHandle, armed: bool) -> Result<(), String> {
     app.emit_to("control", "mode-changed", (armed, tool))
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Hand keyboard focus back to the overlay after a panel click, so the tool and
+/// colour keys keep working. Those are handled by the overlay window, and any
+/// click on the panel moves focus away from it.
+fn refocus_overlay(app: &tauri::AppHandle) {
+    if ARMED.load(Ordering::Relaxed) {
+        if let Ok(w) = window_or_err(app, "overlay") {
+            let _ = w.set_focus();
+        }
+    }
+}
+
+#[tauri::command]
+fn focus_overlay(app: tauri::AppHandle) {
+    refocus_overlay(&app);
 }
 
 /// Pick a tool. Selecting one arms draw mode; "none" returns to pass-through.
@@ -578,6 +647,7 @@ fn panic_reset(app: tauri::AppHandle) -> Result<(), String> {
     // Leaving the screen dimmed would be the worst possible failure state for a
     // panic key, so the spotlight goes down too.
     set_spotlight(app.clone(), false)?;
+    set_highlight(app.clone(), false)?;
     apply_mode(&app, false)
 }
 
@@ -713,6 +783,7 @@ fn main() {
                         }
                         Code::KeyA => clear_shapes(app.clone()),
                         Code::KeyS => toggle_spotlight(app.clone()),
+                        Code::KeyH | Code::KeyL => toggle_highlight(app.clone()),
                         // Registered with and without Shift so both Ctrl+Alt+/
                         // and Ctrl+Alt+? reach here.
                         Code::Slash => toggle_help(app.clone()),
@@ -744,6 +815,7 @@ fn main() {
             set_overlay_visible,
             set_overlay_color,
             set_tool,
+            focus_overlay,
             toggle_mode,
             clear_shapes,
             remove_shape,
@@ -757,6 +829,8 @@ fn main() {
             set_test_graphics,
             set_spotlight,
             toggle_spotlight,
+            set_highlight,
+            toggle_highlight,
             spotlight_size,
             panic_reset,
             geometry_check,
@@ -875,35 +949,67 @@ fn main() {
             // the originals, and Shortcut is cheap to construct.
             let ctrl_alt = Some(Modifiers::CONTROL | Modifiers::ALT);
             let ctrl_alt_shift = Some(Modifiers::CONTROL | Modifiers::ALT | Modifiers::SHIFT);
-            for (sc, keys, desc) in [
-                (Shortcut::new(ctrl_alt, Code::KeyZ), "Ctrl+Alt+Z", "draw / pass-through"),
-                (Shortcut::new(ctrl_alt, Code::Slash), "Ctrl+Alt+/", "show these shortcuts"),
-                (Shortcut::new(ctrl_alt_shift, Code::Slash), "Ctrl+Alt+?", "show these shortcuts"),
-                (Shortcut::new(ctrl_alt, Code::KeyS), "Ctrl+Alt+S", "spotlight on / off"),
-                (Shortcut::new(ctrl_alt, Code::KeyG), "Ctrl+Alt+G", "save screenshot + copy to clipboard"),
+            let sc = Shortcut::new;
+
+            // Each binding lists its preferred combo first and may offer
+            // fallbacks. Two of these collided with other apps on the first
+            // machine it ran on (Ctrl+Alt+C, then Ctrl+Alt+H), so "the default
+            // is already taken" is the normal case, not the exception. Falling
+            // back automatically beats shipping a key that silently does
+            // nothing; the cheat sheet then shows whichever one actually won.
+            let bindings: Vec<(Vec<(Shortcut, &str)>, &str)> = vec![
+                (vec![(sc(ctrl_alt, Code::KeyZ), "Ctrl+Alt+Z")], "draw / pass-through"),
                 (
-                    Shortcut::new(ctrl_alt, Code::PrintScreen),
-                    "Ctrl+Alt+PrtScn",
+                    vec![
+                        (sc(ctrl_alt, Code::Slash), "Ctrl+Alt+/"),
+                        (sc(ctrl_alt_shift, Code::Slash), "Ctrl+Alt+?"),
+                    ],
+                    "show these shortcuts",
+                ),
+                (vec![(sc(ctrl_alt, Code::KeyS), "Ctrl+Alt+S")], "spotlight on / off"),
+                (
+                    vec![
+                        (sc(ctrl_alt, Code::KeyH), "Ctrl+Alt+H"),
+                        (sc(ctrl_alt, Code::KeyL), "Ctrl+Alt+L"),
+                    ],
+                    "click ripples on / off",
+                ),
+                (vec![(sc(ctrl_alt, Code::BracketLeft), "Ctrl+Alt+[")], "spotlight smaller"),
+                (vec![(sc(ctrl_alt, Code::BracketRight), "Ctrl+Alt+]")], "spotlight bigger"),
+                (
+                    vec![
+                        (sc(ctrl_alt, Code::KeyG), "Ctrl+Alt+G"),
+                        (sc(ctrl_alt, Code::PrintScreen), "Ctrl+Alt+PrtScn"),
+                    ],
                     "save screenshot + copy to clipboard",
                 ),
-                (Shortcut::new(ctrl_alt, Code::BracketLeft), "Ctrl+Alt+[", "spotlight smaller"),
-                (Shortcut::new(ctrl_alt, Code::BracketRight), "Ctrl+Alt+]", "spotlight bigger"),
-                (Shortcut::new(ctrl_alt, Code::Backspace), "Ctrl+Alt+Backspace", "remove newest mark"),
-                (Shortcut::new(ctrl_alt, Code::Home), "Ctrl+Alt+Home", "remove oldest mark"),
-                (Shortcut::new(ctrl_alt, Code::KeyA), "Ctrl+Alt+A", "clear all marks"),
-                (Shortcut::new(ctrl_alt_shift, Code::KeyR), "Ctrl+Alt+Shift+R", "reset everything"),
-                (Shortcut::new(ctrl_alt_shift, Code::KeyQ), "Ctrl+Alt+Shift+Q", "quit"),
-            ] {
-                // A failure means another app owns the combo. Recorded rather
-                // than swallowed, so the cheat sheet can say so.
-                let ok = match app.global_shortcut().register(sc) {
-                    Ok(()) => true,
-                    Err(e) => {
-                        eprintln!("[spike] UNAVAILABLE {keys}  ({e})");
-                        false
+                (vec![(sc(ctrl_alt, Code::Backspace), "Ctrl+Alt+Backspace")], "remove newest mark"),
+                (vec![(sc(ctrl_alt, Code::Home), "Ctrl+Alt+Home")], "remove oldest mark"),
+                (vec![(sc(ctrl_alt, Code::KeyA), "Ctrl+Alt+A")], "clear all marks"),
+                (vec![(sc(ctrl_alt_shift, Code::KeyR), "Ctrl+Alt+Shift+R")], "reset everything"),
+                (vec![(sc(ctrl_alt_shift, Code::KeyQ), "Ctrl+Alt+Shift+Q")], "quit"),
+            ];
+
+            for (options, desc) in bindings {
+                let mut taken: Option<&str> = None;
+                for (shortcut, keys) in &options {
+                    match app.global_shortcut().register(*shortcut) {
+                        Ok(()) => {
+                            taken = Some(keys);
+                            break;
+                        }
+                        Err(e) => eprintln!("[spike] {keys} unavailable ({e})"),
                     }
-                };
-                record(keys, desc, "global", ok);
+                }
+                match taken {
+                    Some(keys) => {
+                        eprintln!("[spike] registered  {keys}	{desc}");
+                        record(keys, desc, "global", true);
+                    }
+                    // Nothing registered: advertise the preferred combo, flagged
+                    // as dead, so the sheet says so instead of lying.
+                    None => record(options[0].1, desc, "global", false),
+                }
             }
 
             // Overlay-local keys. Not registered globally — they only reach the
