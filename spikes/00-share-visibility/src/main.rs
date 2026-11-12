@@ -15,6 +15,9 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(windows)]
+mod capture;
+
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
@@ -240,6 +243,48 @@ fn geometry_check(app: tauri::AppHandle) -> Result<GeometryCheck, String> {
 fn refit_overlay(app: tauri::AppHandle) -> Result<(i32, i32), String> {
     let overlay = window_or_err(&app, "overlay")?;
     fit_overlay_to_monitor(&overlay)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Screen capture
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Grab the screen with the marks on it, save a PNG, and copy it to the
+/// clipboard — one keystroke, no dialog. A file picker mid-presentation defeats
+/// the point, and the clipboard copy is what lets you paste straight into the
+/// call's chat.
+///
+/// The control panel and cheat sheet are capture-excluded, so they are absent
+/// from the shot automatically: you capture what the call sees.
+#[tauri::command]
+fn capture_and_save(app: tauri::AppHandle) -> Result<String, String> {
+    #[cfg(not(windows))]
+    {
+        let _ = app;
+        return Err("capture is Windows-only".into());
+    }
+
+    #[cfg(windows)]
+    {
+        let shot = capture::grab()?;
+        let path = capture::default_path()?;
+        capture::save_png(&shot, &path)?;
+
+        // A clipboard failure shouldn't lose the file that already saved fine.
+        let clip = match capture::copy_to_clipboard(&shot) {
+            Ok(()) => true,
+            Err(e) => {
+                eprintln!("[spike] clipboard copy failed: {e}");
+                false
+            }
+        };
+
+        let shown = path.display().to_string();
+        eprintln!("[spike] saved {shown} (clipboard: {clip})");
+        let _ = app.emit_to("overlay", "flash", (shown.clone(), clip));
+        let _ = app.emit_to("control", "captured", (shown.clone(), clip));
+        Ok(shown)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -662,6 +707,9 @@ fn main() {
                         // Registered with and without Shift so both Ctrl+Alt+/
                         // and Ctrl+Alt+? reach here.
                         Code::Slash => toggle_help(app.clone()),
+                        Code::PrintScreen | Code::KeyG => {
+                            capture_and_save(app.clone()).map(|_| ())
+                        }
                         Code::BracketLeft => spotlight_size(app.clone(), -1),
                         Code::BracketRight => spotlight_size(app.clone(), 1),
                         Code::Backspace => remove_shape(app.clone(), "newest".into()),
@@ -694,6 +742,7 @@ fn main() {
             log_js,
             shortcut_list,
             toggle_help,
+            capture_and_save,
             set_help,
             set_stroke,
             set_test_graphics,
@@ -746,6 +795,12 @@ fn main() {
                 (Shortcut::new(ctrl_alt, Code::Slash), "Ctrl+Alt+/", "show these shortcuts"),
                 (Shortcut::new(ctrl_alt_shift, Code::Slash), "Ctrl+Alt+?", "show these shortcuts"),
                 (Shortcut::new(ctrl_alt, Code::KeyS), "Ctrl+Alt+S", "spotlight on / off"),
+                (Shortcut::new(ctrl_alt, Code::KeyG), "Ctrl+Alt+G", "save screenshot + copy to clipboard"),
+                (
+                    Shortcut::new(ctrl_alt, Code::PrintScreen),
+                    "Ctrl+Alt+PrtScn",
+                    "save screenshot + copy to clipboard",
+                ),
                 (Shortcut::new(ctrl_alt, Code::BracketLeft), "Ctrl+Alt+[", "spotlight smaller"),
                 (Shortcut::new(ctrl_alt, Code::BracketRight), "Ctrl+Alt+]", "spotlight bigger"),
                 (Shortcut::new(ctrl_alt, Code::Backspace), "Ctrl+Alt+Backspace", "remove newest mark"),

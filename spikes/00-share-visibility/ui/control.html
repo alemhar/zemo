@@ -88,6 +88,7 @@
     </div>
     <div class="row" style="margin-top:9px">
       <button id="spot">Spotlight</button>
+      <button id="shot">Screenshot</button>
       <button id="pass">Pass through now</button>
       <button id="gfx" class="on">Test graphics on</button>
     </div>
@@ -292,6 +293,14 @@
     const b = document.getElementById("spot");
     b.classList.toggle("on", !!e.payload);
     b.textContent = e.payload ? "Spotlight ON" : "Spotlight";
+  });
+
+  document.getElementById("shot").addEventListener("click", () =>
+    call("capture_and_save").catch((e) => say(String(e), true)));
+
+  window.__TAURI__.event.listen("captured", (e) => {
+    const [path, clipped] = e.payload;
+    say(`Saved${clipped ? " + copied to clipboard" : " (clipboard failed)"}: ${path}`);
   });
 
   document.getElementById("pass").addEventListener("click", () =>
