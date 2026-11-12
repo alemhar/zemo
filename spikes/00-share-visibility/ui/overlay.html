@@ -28,9 +28,8 @@
     position: fixed; inset: 0;
     border: 6px solid var(--accent);
     box-sizing: border-box;
-    animation: breathe 2s ease-in-out infinite;
+    opacity: .75;
   }
-  @keyframes breathe { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
 
   .corner { position: fixed; width: 90px; height: 90px; border: 6px solid var(--accent); }
   .tl { top: 24px; left: 24px; border-right: 0; border-bottom: 0; }
@@ -102,7 +101,19 @@
      breathes on a 2s loop, so another pulsing border read as more of the same.
      A card that punches in and settles is a different KIND of motion, which is
      what makes it register as an event rather than ambience. */
-  #shutter { display: none; }
+  #shutter {
+    position: fixed; inset: 0;
+    border: 16px solid #fff;
+    box-sizing: border-box;
+    box-shadow: inset 0 0 50px rgba(255,255,255,.5);
+    opacity: 0; pointer-events: none;
+  }
+  #shutter.fire { animation: shutter .5s ease-out; }
+  @keyframes shutter {
+    0%   { opacity: 0 }
+    15%  { opacity: 1 }
+    100% { opacity: 0 }
+  }
 
   /* Toast sits top-centre, clear of the centred test graphics that were
      swallowing it before. */
@@ -579,6 +590,11 @@
       const [path, clipped] = Array.isArray(e.payload)
         ? e.payload
         : [String(e.payload ?? ""), false];
+
+      const sh = document.getElementById("shutter");
+      sh.classList.remove("fire");
+      void sh.offsetWidth;          // restart cleanly on rapid repeats
+      sh.classList.add("fire");
 
       const el = document.getElementById("flash");
       el.innerHTML =
