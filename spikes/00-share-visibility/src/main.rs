@@ -400,6 +400,7 @@ fn apply_mode(app: &tauri::AppHandle, armed: bool) -> Result<(), String> {
 /// Pick a tool. Selecting one arms draw mode; "none" returns to pass-through.
 #[tauri::command]
 fn set_tool(app: tauri::AppHandle, tool: String) -> Result<(), String> {
+    eprintln!("[spike] set_tool({tool})");
     if tool != "none" {
         *TOOL.lock().map_err(|e| e.to_string())? = tool;
         apply_mode(&app, true)
@@ -431,6 +432,14 @@ fn remove_shape(app: tauri::AppHandle, which: String) -> Result<(), String> {
 
 /// The overlay owns the shape list, so it reports the count back for the panel
 /// to display. Routed through Rust so the panel doesn't need event-emit perms.
+/// Lets the overlay's JS write into the same log as the Rust side. The webview
+/// console isn't reachable from a headless run, and guessing at which half of
+/// an IPC round-trip failed wastes more time than this costs.
+#[tauri::command]
+fn log_js(msg: String) {
+    eprintln!("[overlay] {msg}");
+}
+
 #[tauri::command]
 fn report_count(app: tauri::AppHandle, count: usize) -> Result<(), String> {
     app.emit_to("control", "shape-count", count)
@@ -616,6 +625,7 @@ fn main() {
             clear_shapes,
             remove_shape,
             report_count,
+            log_js,
             set_stroke,
             set_test_graphics,
             set_spotlight,

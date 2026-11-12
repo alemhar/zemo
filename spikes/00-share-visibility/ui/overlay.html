@@ -158,6 +158,9 @@
 
 <script>
   const { event, core } = window.__TAURI__ ?? {};
+  window.addEventListener("error", (e) => {
+    core?.invoke("log_js", { msg: `JS ERROR: ${e.message} @${e.lineno}` }).catch(() => {});
+  });
   const invoke = core?.invoke;
   const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -308,9 +311,10 @@
       fo.setAttribute("height", Math.max(Math.abs(b.y - a.y), 46));
     };
 
-    div.addEventListener("focus", () => { editing = true; });
+    div.addEventListener("focus", () => { editing = true; renderLegend(); });
     div.addEventListener("blur", () => {
       editing = false;
+      renderLegend();
       // An empty box is almost always an accidental click; drop it rather than
       // leaving an empty frame on screen.
       if (!div.textContent.trim()) {
@@ -370,7 +374,12 @@
     // new shape on top of it.
     if (e.target.closest?.(".textbox")) return;
     start = pos(e);
-    active = BUILDERS[tool]();
+    try {
+      active = BUILDERS[tool]();
+    } catch (err) {
+      invoke?.("log_js", { msg: `BUILDER ${tool} THREW: ${err}` }).catch(() => {});
+      return;
+    }
     active.update(start, start);
     draw.appendChild(active.node);
     window.setPointerCapture?.call(e.target, e.pointerId);
@@ -461,12 +470,24 @@
   }
 
   // ── State from the control panel ───────────────────────────────────────────
+  const TOOL_HINT = "<b>A</b>rrow <b>R</b>ect <b>O</b>val <b>P</b>en <b>T</b>ext";
+
+  function renderLegend() {
+    if (editing) {
+      // The one state where the shortcuts are deliberately dead, so say so.
+      legend.innerHTML = `<b>typing</b> • Esc finishes • then ${TOOL_HINT} to draw`;
+    } else if (tool === "none") {
+      legend.innerHTML = "overlay • click-through • NOT capture-excluded";
+    } else {
+      legend.innerHTML = `drawing: <b>${tool}</b> • ${TOOL_HINT} • Esc exits`;
+    }
+  }
+
   function setTool(next) {
+    invoke?.("log_js", { msg: `setTool -> ${next}` }).catch(() => {});
     tool = next;
     document.body.classList.toggle("armed", tool !== "none");
-    legend.innerHTML = tool === "none"
-      ? "overlay • click-through • NOT capture-excluded"
-      : `drawing: <b>${tool}</b> • <b>A</b>rrow <b>R</b>ect <b>O</b>val <b>P</b>en • Esc exits`;
+    renderLegend();
   }
   setTool("none");
 
