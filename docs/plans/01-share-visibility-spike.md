@@ -4,7 +4,7 @@
 |---|---|
 | **Status** | 🟡 Partially validated — local proxy passes, live-call tests pending |
 | **Gate** | Hard. No Phase 1 work until the live-call tests are green. |
-| **Code** | [`spikes/00-share-visibility/`](../../spikes/00-share-visibility/) |
+| **Code** | Promoted to the app itself — [`src-tauri/`](../../src-tauri/) and [`ui/`](../../ui/). The capture probe survives as `src-tauri/src/bin/capture_probe.rs`. |
 | **PRD refs** | §4, §9 R1, R4.2 |
 
 ---
@@ -44,7 +44,7 @@ Three deliberate design choices make the result trustworthy:
 ## Running it
 
 ```bash
-cd spikes/00-share-visibility
+cd src-tauri
 cargo run
 ```
 

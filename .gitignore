@@ -26,7 +26,6 @@ dist-ssr
 # Rust / Tauri
 src-tauri/target/
 src-tauri/gen/
-src-tauri/Cargo.lock
 
 # Claude Code
 .claude/
@@ -38,6 +37,3 @@ src-tauri/Cargo.lock
 # Zemo
 scratch/
 
-# Spike build artifacts
-spikes/*/target/
-spikes/*/gen/

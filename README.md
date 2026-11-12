@@ -76,7 +76,7 @@ this limitation is on the v2 list.
 
 | Phase | Scope | Status |
 |---|---|---|
-| **0** | Spike: confirm the overlay actually appears in a real Teams/Zoom monitor share | 🟡 [Built](spikes/00-share-visibility/) — local capture passes, live-call tests pending |
+| **0** | Spike: confirm the overlay actually appears in a real Teams/Zoom monitor share | 🟡 [Built](docs/plans/01-share-visibility-spike.md) — four local capture paths pass; live-call test pending |
 | **1** | Transparent full-monitor overlay, pass-through ⇄ draw state machine, tray | ⬜ |
 | **2** | Annotation tools, colours, undo, toolbar pill | ⬜ |
 | **3** | Cursor highlight, click ripples, spotlight | ⬜ |
@@ -84,6 +84,22 @@ this limitation is on the v2 list.
 | **5** | Settings, shortcut remapping, onboarding, installer | ⬜ |
 
 Phase 0 is a hard gate — it validates the product's core premise before any feature work begins.
+
+## Building from source
+
+```bash
+cd src-tauri
+cargo run                 # debug, with logging on the console
+cargo tauri build         # release + NSIS/MSI installers
+```
+
+No npm install and no bundler — the frontend in `ui/` is static HTML served straight from disk.
+
+```
+ui/              overlay, control panel, cheat sheet
+src-tauri/src/   main.rs (state machine, hotkeys, Win32), capture.rs (screenshot)
+docs/            PRD and plan docs
+```
 
 ## Tech stack
 

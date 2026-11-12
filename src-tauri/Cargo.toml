@@ -1,10 +1,9 @@
 [package]
-name = "zemo-spike-share-visibility"
+name = "zemo"
 version = "0.1.1"
-description = "Phase 0 spike: does a transparent always-on-top overlay appear in a Teams/Zoom monitor share?"
+description = "A transparent, always-on-top screen annotation overlay for video calls"
 authors = ["Alemhar Salihuddin"]
 edition = "2021"
-publish = false
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -16,11 +15,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [[bin]]
-name = "zemo-spike-share-visibility"
+name = "zemo"
 path = "src/main.rs"
 
-# Probes the capture APIs Teams and Zoom actually use, so the question can be
-# answered locally instead of only on a live call.
+# Diagnostic kept from the Phase 0 spike: grabs one frame through the same
+# capture API Teams and Zoom use, to check the overlay is actually in it.
 [[bin]]
 name = "capture-probe"
 path = "src/bin/capture_probe.rs"
