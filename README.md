@@ -18,8 +18,24 @@ no accounts, no vendor lock-in.
 
 ---
 
-> ⚠️ **Pre-alpha — no code yet.** This repo currently contains the product definition only.
-> See **[docs/PRD.md](docs/PRD.md)** for the full spec, and the [roadmap](#roadmap) below.
+> ⚠️ **Pre-alpha.** What exists today is the Phase 0 spike — a throwaway app built to answer one
+> question that grew into a working annotation prototype. It is usable, not finished.
+> See **[docs/PRD.md](docs/PRD.md)** for the product definition and the [roadmap](#roadmap) below.
+
+## Download
+
+Grab the [latest prerelease](https://github.com/alemhar/zemo/releases/latest):
+
+| Artifact | Best for |
+|---|---|
+| **`Zemo_<version>_x64-setup.exe`** (NSIS) | Most people — small wizard, Start-menu shortcut, clean uninstall. Installs per-user, so **no admin rights needed**. |
+| **`Zemo_<version>_x64_en-US.msi`** | IT admins — Group Policy, Intune, SCCM |
+| **`Zemo.exe`** | No install at all — download and run from anywhere |
+
+> **Windows will warn you on first run.** The builds are **unsigned**, so SmartScreen shows
+> "Windows protected your PC". Click **"More info" → "Run anyway"**. This is expected for any
+> unsigned binary and is not a sign anything is wrong — code signing is on the roadmap but needs a
+> paid certificate.
 
 ---
 
