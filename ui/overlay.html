@@ -71,7 +71,12 @@
      div wraps for free and is editable. Styles apply normally because the div
      is real HTML in this document. */
   .textbox {
-    width: 100%; height: 100%;
+    /* max-content makes the box hug the text instead of filling the area that
+       was dragged out; max-width keeps the dragged width as the wrap limit. */
+    width: max-content;
+    max-width: 100%;
+    height: auto;
+    min-height: 1.2em;
     box-sizing: border-box;
     padding: 4px 7px;
     /* Handwriting, from what Windows actually ships. Ink Free is the Win10/11
@@ -95,6 +100,10 @@
   .textbox.drawing {
     border: 2px dashed currentColor;
     background: var(--edit-bg, rgba(0,0,0,.4));
+    /* Fill the dragged area: while you are still choosing or filling the
+       space, the box has to follow the cursor rather than hug the text. */
+    width: 100%;
+    height: 100%;
   }
 
   /* Drag handle. Only grabbable while armed, and invisible otherwise, so the
@@ -259,6 +268,12 @@
   let tool = "none";
   let stroke = 6;
 
+  // Text carries its own style, deliberately not the drawing colour: a note
+  // and the arrow pointing at it rarely want to be the same thing. Starts on
+  // Zemo's default ink, then remembers whatever was last used.
+  let textBold = false;
+  let textColour = "#FFC20E";
+
   // Single-letter tool keys (PRD §6.3). Safe unmodified because the overlay only
   // holds focus while armed, so these can never leak into the app underneath.
   const TOOL_KEYS = { a: "arrow", r: "rect", o: "ellipse", p: "pen", t: "text" };
@@ -418,12 +433,14 @@
 
   function makeText() {
     const g = el("g", {});
+    const colourOverride = textColour;      // captured per box, like marks
     const fo = el("foreignObject", {});
     const div = document.createElementNS(XHTML_NS, "div");
     div.setAttribute("contenteditable", "true");
     div.setAttribute("class", "textbox");
-    const colour = accent();
+    const colour = colourOverride;
     div.style.color = colour;
+    div.style.fontWeight = textBold ? "700" : "400";
     // With the panel gone, a tight shadow is what keeps the text readable over
     // arbitrary screen content. Opposite brightness to the ink, same rule the
     // marks use — but on type it reads as weight rather than as an outline.
@@ -444,7 +461,20 @@
     // Shown while the area is being dragged out; cleared once committed.
     div.classList.add("drawing");
 
-    const s = { node: g, div, fo, grip, isText: true, box: { x: 0, y: 0, w: 0, h: 0 } };
+    const s = {
+      node: g, div, fo, grip, isText: true,
+      box: { x: 0, y: 0, w: 0, h: 0 },
+      wrapWidth: 0,              // the width dragged out; the wrap limit
+    };
+
+    /** Shrink the container onto the text it actually holds. */
+    s.fit = () => {
+      // offsetWidth/Height are the div's own shrink-wrapped size. The
+      // foreignObject has to stay at least that big or it clips.
+      const w = Math.max(div.offsetWidth + 2, 40);
+      const h = Math.max(div.offsetHeight + 2, 28);
+      s.place(s.box.x, s.box.y, Math.max(w, s.wrapWidth), h);
+    };
 
     /** Single place that moves the box, so the grip can never drift off it. */
     s.place = (x, y, w, h) => {
@@ -459,17 +489,23 @@
     };
     grip.__shape = s;
 
-    s.update = (a, b) => s.place(
-      Math.min(a.x, b.x),
-      Math.min(a.y, b.y),
-      Math.max(Math.abs(b.x - a.x), 120),
-      Math.max(Math.abs(b.y - a.y), 46),
-    );
+    s.update = (a, b) => {
+      s.wrapWidth = Math.max(Math.abs(b.x - a.x), 120);
+      s.place(
+        Math.min(a.x, b.x),
+        Math.min(a.y, b.y),
+        s.wrapWidth,
+        Math.max(Math.abs(b.y - a.y), 46),
+      );
+    };
 
     div.addEventListener("focus", () => { editing = true; renderLegend(); });
     div.addEventListener("blur", () => {
       editing = false;
       renderLegend();
+      // Committed: drop the wrap limit so the outline sits tight on the text.
+      s.wrapWidth = 0;
+      s.fit();
       // An empty box is almost always an accidental click; drop it rather than
       // leaving an empty frame on screen.
       if (!div.textContent.trim()) {
@@ -480,8 +516,11 @@
     });
     // foreignObject clips its content, so grow to fit instead of hiding text.
     div.addEventListener("input", () => {
-      const needed = div.scrollHeight;
-      if (needed > s.box.h) s.place(s.box.x, s.box.y, s.box.w, needed);
+      // Grow to fit overflow, but never shrink mid-sentence — the area you
+      // dragged is the area you asked for until you leave the box.
+      if (div.scrollHeight > s.box.h) {
+        s.place(s.box.x, s.box.y, s.box.w, div.scrollHeight);
+      }
     });
 
     return s;
@@ -533,9 +572,17 @@
       e.preventDefault();
       return;
     }
-    // Clicking an existing text box should put the caret in it, not start a
-    // new shape on top of it.
-    if (e.target.closest?.(".textbox")) return;
+    // Clicking existing text edits it rather than drawing over it. Restoring
+    // the wrap limit first means the box can grow again as you type.
+    const box = e.target.closest?.(".textbox");
+    if (box) {
+      const owner = shapes.find((sh) => sh.div === box);
+      if (owner) {
+        owner.wrapWidth = Math.max(owner.box.w, 240);
+        owner.place(owner.box.x, owner.box.y, owner.wrapWidth, owner.box.h);
+      }
+      return;
+    }
     start = pos(e);
     try {
       active = BUILDERS[tool]();
@@ -563,9 +610,10 @@
     if (!active) return;
 
     if (active.isText) {
-      // A tap with no real drag means "put a box here" — give it a usable
-      // default rather than a 120px sliver.
-      if (active.box.w <= 120) {
+      // A tap with no real drag still needs a sensible wrap width to type into.
+      // A tap with no real drag still needs somewhere to type.
+      if (active.wrapWidth <= 120) {
+        active.wrapWidth = 380;
         active.place(active.box.x, active.box.y, 380, 110);
       }
       active.div.classList.remove("drawing");
@@ -680,6 +728,22 @@
   setTool("none");
 
   if (event) {
+    event.listen("text-style", (e) => {
+      const { bold, color } = e.payload || {};
+      if (bold !== null && bold !== undefined) textBold = bold;
+      if (color) textColour = color;
+      // Apply to the box being edited, so the change is visible immediately
+      // rather than only on the next one.
+      const live = document.activeElement;
+      if (live && live.classList?.contains("textbox")) {
+        live.style.fontWeight = textBold ? "700" : "400";
+        live.style.color = textColour;
+        live.style.setProperty("--faint", rgba(textColour, 0.32));
+        const owner = shapes.find((sh) => sh.div === live);
+        owner?.fit();
+      }
+    });
+
     event.listen("set-color", (e) => {
       document.documentElement.style.setProperty("--accent", e.payload);
     });

@@ -27,6 +27,8 @@
   button.danger { border-color: #5a2b2b; }
   .swatch { width: 30px; height: 30px; border-radius: 6px; border: 2px solid var(--line); padding: 0; }
   .swatch.on { border-color: #e8eaed; box-shadow: 0 0 0 2px #14161a, 0 0 0 4px #e8eaed; }
+  .tswatch { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); padding: 0; }
+  .tswatch.on { border-color: #e8eaed; box-shadow: 0 0 0 2px #14161a, 0 0 0 4px #e8eaed; }
   .hint { color: var(--muted); font-size: 12px; margin-top: 9px; line-height: 1.5; }
   code { background: #111316; padding: 1px 5px; border-radius: 4px; font-size: 12px; }
   dl { display: grid; grid-template-columns: auto 1fr; gap: 5px 12px; margin: 0; font-size: 12.5px; }
@@ -123,7 +125,24 @@
   </div>
 
   <div class="card">
-    <h2>Colour</h2>
+    <h2>Text style</h2>
+    <div class="row">
+      <button id="bold" style="font-weight:800">Bold</button>
+      <button class="tswatch on" style="background:#FFC20E" data-c="#FFC20E" title="Bumblebee"></button>
+      <button class="tswatch" style="background:#FF2D2D" data-c="#FF2D2D" title="Red"></button>
+      <button class="tswatch" style="background:#4FC3F7" data-c="#4FC3F7" title="Light blue"></button>
+      <button class="tswatch" style="background:#FFFFFF" data-c="#FFFFFF" title="White"></button>
+      <button class="tswatch" style="background:#000000" data-c="#000000" title="Black"></button>
+    </div>
+    <p class="hint">
+      Text keeps its own colour and weight, separate from the drawing colour below &mdash; a note
+      and the arrow pointing at it rarely want to match. New boxes reuse whatever you last chose.
+      Change it while typing and the current box updates too.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Drawing colour</h2>
     <div class="row">
       <button class="swatch on" style="background:#FFC20E" data-c="#FFC20E" title="Bumblebee (1)"></button>
       <button class="swatch" style="background:#FF2D2D" data-c="#FF2D2D" title="Red (2)"></button>
@@ -269,6 +288,22 @@
     if (e.target.closest("button")) {
       setTimeout(() => invoke("focus_overlay").catch(() => {}), 0);
     }
+  });
+
+  // ── Text style ──────────────────────────────────────────────────────────────
+  toggle(
+    document.getElementById("bold"),
+    "Bold", "Bold",
+    (on) => invoke("set_text_style", { bold: on, color: null })
+  );
+
+  document.querySelectorAll(".tswatch").forEach((b) => {
+    b.addEventListener("click", () => {
+      document.querySelectorAll(".tswatch").forEach((o) => o.classList.remove("on"));
+      b.classList.add("on");
+      invoke("set_text_style", { bold: null, color: b.dataset.c })
+        .catch((e) => say(String(e), true));
+    });
   });
 
   // ── Shortcut cheat sheet ────────────────────────────────────────────────────

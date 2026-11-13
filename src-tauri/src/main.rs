@@ -628,6 +628,19 @@ fn report_count(app: tauri::AppHandle, count: usize) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+/// Text style is tracked separately from the drawing colour: a note and the
+/// arrow pointing at it rarely want to be the same colour. Either field may be
+/// null, meaning "leave this one alone".
+#[tauri::command]
+fn set_text_style(
+    app: tauri::AppHandle,
+    bold: Option<bool>,
+    color: Option<String>,
+) -> Result<(), String> {
+    app.emit_to("overlay", "text-style", serde_json::json!({ "bold": bold, "color": color }))
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn set_stroke(app: tauri::AppHandle, width: u32) -> Result<(), String> {
     app.emit_to("overlay", "set-stroke", width)
@@ -826,6 +839,7 @@ fn main() {
             capture_and_save,
             set_help,
             set_stroke,
+            set_text_style,
             set_test_graphics,
             set_spotlight,
             toggle_spotlight,
