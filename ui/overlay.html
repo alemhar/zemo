@@ -73,18 +73,43 @@
   .textbox {
     width: 100%; height: 100%;
     box-sizing: border-box;
-    padding: 8px 11px;
-    font: 600 22px/1.35 "Segoe UI", system-ui, sans-serif;
-    border: 3px solid;
-    border-radius: 6px;
+    padding: 4px 7px;
+    /* Handwriting, from what Windows actually ships. Ink Free is the Win10/11
+       face; Segoe Script and Print cover older installs; Comic Sans is the
+       last resort that is genuinely always present. */
+    font: 400 30px/1.28 "Ink Free", "Segoe Script", "Segoe Print",
+          "Comic Sans MS", cursive;
+    /* Committed text keeps a barely-there dashed container so you can see
+       where it ends; drawing or typing promotes it to a real guide. */
+    border: 1px dashed var(--faint, rgba(128,128,128,.3));
+    border-radius: 4px;
+    background: transparent;
     outline: none;
     white-space: pre-wrap;
     overflow-wrap: break-word;
     overflow: hidden;
   }
+  /* While the caret is in the box: show the container so the writer can see
+     where the text will wrap, and sit it on a scrim so the caret is findable. */
+  .textbox:focus,
+  .textbox.drawing {
+    border: 2px dashed currentColor;
+    background: var(--edit-bg, rgba(0,0,0,.4));
+  }
+
+  /* Drag handle. Only grabbable while armed, and invisible otherwise, so the
+     call never sees editing furniture around your notes. */
+  .grip {
+    opacity: 0;
+    pointer-events: none;
+    cursor: move;
+    transition: opacity .12s ease;
+  }
+  body.armed .grip { opacity: .55; pointer-events: auto; }
+  body.armed .grip:hover { opacity: 1; }
   .textbox:empty::before {
     content: "type…";
-    opacity: .45;
+    opacity: .4;
   }
 
   /* ── Click ripples (PRD R6.6) ────────────────────────────────────────────── */
@@ -383,25 +408,63 @@
    * The box grows downward if the text outruns the height you dragged, so a
    * misjudged drag doesn't silently clip what you wrote.
    */
+  /** `#rrggbb` to an rgba() string, for tinting borders from the ink colour. */
+  function rgba(hex, a) {
+    const h = hex.replace("#", "");
+    const n = h.length === 3 ? h.split("").map((c) => c + c).join("") : h;
+    const [r, g, b] = [0, 2, 4].map((i) => parseInt(n.slice(i, i + 2), 16));
+    return `rgba(${r},${g},${b},${a})`;
+  }
+
   function makeText() {
+    const g = el("g", {});
     const fo = el("foreignObject", {});
     const div = document.createElementNS(XHTML_NS, "div");
     div.setAttribute("contenteditable", "true");
     div.setAttribute("class", "textbox");
     const colour = accent();
     div.style.color = colour;
-    div.style.borderColor = colour;
-    div.style.background =
-      luminance(colour) > 0.5 ? "rgba(0,0,0,.66)" : "rgba(255,255,255,.82)";
+    // With the panel gone, a tight shadow is what keeps the text readable over
+    // arbitrary screen content. Opposite brightness to the ink, same rule the
+    // marks use — but on type it reads as weight rather than as an outline.
+    const light = luminance(colour) > 0.5;
+    div.style.textShadow = light
+      ? "0 1px 3px rgba(0,0,0,.9), 0 0 2px rgba(0,0,0,.7)"
+      : "0 1px 3px rgba(255,255,255,.95), 0 0 2px rgba(255,255,255,.8)";
+    div.style.setProperty(
+      "--edit-bg", light ? "rgba(0,0,0,.45)" : "rgba(255,255,255,.55)");
+    div.style.setProperty("--faint", rgba(colour, 0.32));
     fo.appendChild(div);
 
-    const s = { node: fo, div, isText: true };
-    s.update = (a, b) => {
-      fo.setAttribute("x", Math.min(a.x, b.x));
-      fo.setAttribute("y", Math.min(a.y, b.y));
-      fo.setAttribute("width", Math.max(Math.abs(b.x - a.x), 120));
-      fo.setAttribute("height", Math.max(Math.abs(b.y - a.y), 46));
+    const grip = el("rect", { class: "grip", width: 18, height: 18, rx: 4 });
+    grip.setAttribute("fill", colour);
+    grip.setAttribute("stroke", "rgba(0,0,0,.35)");
+    g.append(fo, grip);
+
+    // Shown while the area is being dragged out; cleared once committed.
+    div.classList.add("drawing");
+
+    const s = { node: g, div, fo, grip, isText: true, box: { x: 0, y: 0, w: 0, h: 0 } };
+
+    /** Single place that moves the box, so the grip can never drift off it. */
+    s.place = (x, y, w, h) => {
+      s.box = { x, y, w, h };
+      fo.setAttribute("x", x);
+      fo.setAttribute("y", y);
+      fo.setAttribute("width", w);
+      fo.setAttribute("height", h);
+      // Sits just outside the top-left corner, clear of the first character.
+      grip.setAttribute("x", x - 10);
+      grip.setAttribute("y", y - 10);
     };
+    grip.__shape = s;
+
+    s.update = (a, b) => s.place(
+      Math.min(a.x, b.x),
+      Math.min(a.y, b.y),
+      Math.max(Math.abs(b.x - a.x), 120),
+      Math.max(Math.abs(b.y - a.y), 46),
+    );
 
     div.addEventListener("focus", () => { editing = true; renderLegend(); });
     div.addEventListener("blur", () => {
@@ -418,7 +481,7 @@
     // foreignObject clips its content, so grow to fit instead of hiding text.
     div.addEventListener("input", () => {
       const needed = div.scrollHeight;
-      if (needed > +fo.getAttribute("height")) fo.setAttribute("height", needed);
+      if (needed > s.box.h) s.place(s.box.x, s.box.y, s.box.w, needed);
     });
 
     return s;
@@ -456,12 +519,20 @@
   // ── Drawing interaction ────────────────────────────────────────────────────
   let active = null;
   let start = null;
+  let drag = null;          // { shape, dx, dy } while a text box is being moved
 
   const pos = (e) => ({ x: e.clientX, y: e.clientY });
 
   window.addEventListener("pointerdown", (e) => {
     if (tool === "none" || !BUILDERS[tool]) return;
     if (e.button !== 0) return;
+    // Grabbing a handle moves that box instead of drawing a new shape.
+    const grabbed = e.target.__shape;
+    if (grabbed) {
+      drag = { shape: grabbed, dx: e.clientX - grabbed.box.x, dy: e.clientY - grabbed.box.y };
+      e.preventDefault();
+      return;
+    }
     // Clicking an existing text box should put the caret in it, not start a
     // new shape on top of it.
     if (e.target.closest?.(".textbox")) return;
@@ -478,20 +549,26 @@
   });
 
   window.addEventListener("pointermove", (e) => {
+    if (drag) {
+      const { shape, dx, dy } = drag;
+      shape.place(e.clientX - dx, e.clientY - dy, shape.box.w, shape.box.h);
+      return;
+    }
     if (!active) return;
     active.update(start, pos(e));
   });
 
   window.addEventListener("pointerup", () => {
+    if (drag) { drag = null; return; }
     if (!active) return;
 
     if (active.isText) {
       // A tap with no real drag means "put a box here" — give it a usable
       // default rather than a 120px sliver.
-      if (+active.node.getAttribute("width") <= 120) {
-        active.node.setAttribute("width", 340);
-        active.node.setAttribute("height", 96);
+      if (active.box.w <= 120) {
+        active.place(active.box.x, active.box.y, 380, 110);
       }
+      active.div.classList.remove("drawing");
       shapes.push(active);
       syncCount();
       const d = active.div;
