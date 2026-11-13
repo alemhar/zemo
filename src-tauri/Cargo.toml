@@ -1,6 +1,6 @@
 [package]
 name = "zemo"
-version = "0.1.2"
+version = "0.1.3"
 description = "A transparent, always-on-top screen annotation overlay for video calls"
 authors = ["Alemhar Salihuddin"]
 edition = "2021"
